@@ -17,8 +17,11 @@ async def ensure_admin(session: AsyncSession) -> User | None:
     settings = get_settings()
     username = settings.admin_username.strip()
     password = settings.admin_password
-    if not username or not password:
-        logger.warning("ADMIN_USERNAME/ADMIN_PASSWORD не заданы — администратор не создан")
+    if not username or not password or password == "admin":
+        logger.error(
+            "ADMIN_USERNAME/ADMIN_PASSWORD должны быть заданы; "
+            "небезопасный пароль администратора отклонён"
+        )
         return None
 
     user = (
@@ -31,8 +34,6 @@ async def ensure_admin(session: AsyncSession) -> User | None:
     session.add(user)
     await session.flush()
     logger.info("создан администратор %s", username)
-    if settings.admin_password == "admin":
-        logger.warning("используется пароль администратора по умолчанию — смените его в панели")
     return user
 
 

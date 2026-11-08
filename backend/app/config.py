@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     trust_proxy_headers: bool = False
 
     admin_username: str = "admin"
-    admin_password: str = "admin"
+    admin_password: str = ""
     allow_registration: bool = False
 
     portals_base_url: str = "https://portal-market.com/partners"
