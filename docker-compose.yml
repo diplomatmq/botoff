@@ -1,0 +1,64 @@
+services:
+  backend:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      WORKER_ENABLED: "false"
+    volumes:
+      - appdata:/app/data
+    networks:
+      - internal
+
+  worker:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    command: ["./entrypoint.sh", "worker"]
+    env_file:
+      - .env
+    environment:
+      WORKER_ENABLED: "true"
+    volumes:
+      - appdata:/app/data
+    networks:
+      - internal
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        BACKEND_URL: http://backend:8000
+    restart: unless-stopped
+    ports:
+      - "${PANEL_PORT:-3000}:3000"
+    depends_on:
+      - backend
+    networks:
+      - internal
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - frontend
+    networks:
+      - internal
+
+volumes:
+  appdata:
+  caddy_data:
+  caddy_config:
+
+networks:
+  internal:
+    driver: bridge

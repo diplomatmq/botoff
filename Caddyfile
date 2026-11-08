@@ -1,0 +1,3 @@
+autoorder.monkeysdynasty.website {
+    reverse_proxy frontend:3000
+}
