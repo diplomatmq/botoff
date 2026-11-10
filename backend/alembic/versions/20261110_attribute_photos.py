@@ -15,8 +15,16 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    op.add_column("models_cache", sa.Column("photo_url", sa.Text(), nullable=True))
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    columns = {column["name"] for column in inspector.get_columns("models_cache")}
+    if "photo_url" not in columns:
+        op.add_column("models_cache", sa.Column("photo_url", sa.Text(), nullable=True))
 
 
 def downgrade() -> None:
-    op.drop_column("models_cache", "photo_url")
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    columns = {column["name"] for column in inspector.get_columns("models_cache")}
+    if "photo_url" in columns:
+        op.drop_column("models_cache", "photo_url")
