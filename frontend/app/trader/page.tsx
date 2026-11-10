@@ -45,6 +45,9 @@ export default function TraderPage() {
   const [excludedCollections, setExcludedCollections] = useState<string[]>([]);
   const [excludedModels, setExcludedModels] = useState<string[]>([]);
   const [excludedBackdrops, setExcludedBackdrops] = useState<string[]>([]);
+  const [collectionSearch, setCollectionSearch] = useState('');
+  const [modelSearch, setModelSearch] = useState('');
+  const [backdropSearch, setBackdropSearch] = useState('');
 
   async function load() {
     try {
@@ -98,6 +101,15 @@ export default function TraderPage() {
 
   const selectableCollections = collections.filter(
     (collection) => !excludedCollections.includes(collection.id),
+  );
+  const visibleCollections = collections.filter((collection) =>
+    collection.name.toLowerCase().includes(collectionSearch.trim().toLowerCase()),
+  );
+  const visibleModels = models.filter((model) =>
+    model.name.toLowerCase().includes(modelSearch.trim().toLowerCase()),
+  );
+  const visibleBackdrops = backdrops.filter((backdrop) =>
+    backdrop.name.toLowerCase().includes(backdropSearch.trim().toLowerCase()),
   );
   const savedState = useMemo(() => JSON.stringify({
     enabled: settings?.smart_trader_enabled,
@@ -181,8 +193,9 @@ export default function TraderPage() {
             </label>
             <div className="space-y-2">
               <span className="block text-xs uppercase text-slate-400">Исключить коллекции</span>
-              <div className="flex max-h-32 flex-wrap gap-2 overflow-y-auto rounded border border-slate-800 bg-slate-900/50 p-2">
-                {collections.map((collection) => {
+              <Input placeholder="Поиск коллекции" value={collectionSearch} onChange={(event) => setCollectionSearch(event.target.value)} />
+              <div className="max-h-64 space-y-1 overflow-y-auto rounded border border-slate-800 bg-slate-900/50 p-2">
+                {visibleCollections.map((collection) => {
                   const selected = excludedCollections.includes(collection.id);
                   return (
                     <button
@@ -196,11 +209,12 @@ export default function TraderPage() {
                           setSelectedCollectionId('');
                         }
                       }}
-                      className={`rounded border px-2 py-1 text-xs ${
+                      className={`flex w-full items-center gap-2 rounded border px-2 py-1 text-left text-xs ${
                         selected ? 'border-red-500 bg-red-700 text-white' : 'border-slate-700 bg-slate-800 text-slate-300'
                       }`}
                     >
-                      {collection.name}
+                    {collection.photo_url ? <img src={collection.photo_url} alt="" className="h-8 w-8 rounded object-cover" /> : <span className="h-8 w-8 rounded bg-slate-700" />}
+                    <span>{collection.name}</span>
                     </button>
                   );
                 })}
@@ -208,18 +222,23 @@ export default function TraderPage() {
             </div>
             <label className="block max-w-xl text-sm">
               <span className="mb-1 block text-xs uppercase text-slate-400">Коллекция для выбора моделей и фонов</span>
-              <Select value={selectedCollectionId} onChange={(event) => setSelectedCollectionId(event.target.value)}>
-                <option value="">Выберите коллекцию</option>
+              <Input className="mb-2" placeholder="Поиск коллекции" value={collectionSearch} onChange={(event) => setCollectionSearch(event.target.value)} />
+              <div className="max-h-64 space-y-1 overflow-y-auto rounded border border-slate-800 bg-slate-900/50 p-2">
                 {selectableCollections.map((collection) => (
-                  <option key={collection.id} value={collection.id}>{collection.name}</option>
+                  <button key={collection.id} type="button" onClick={() => setSelectedCollectionId(collection.id)}
+                    className={`flex w-full items-center gap-2 rounded border px-2 py-1 text-left text-xs ${selectedCollectionId === collection.id ? 'border-blue-500 bg-blue-600 text-white' : 'border-slate-700 bg-slate-800 text-slate-300'}`}>
+                    {collection.photo_url ? <img src={collection.photo_url} alt="" className="h-8 w-8 rounded object-cover" /> : <span className="h-8 w-8 rounded bg-slate-700" />}
+                    <span>{collection.name}</span>
+                  </button>
                 ))}
-              </Select>
+              </div>
             </label>
             <div className="grid w-full grid-cols-1 gap-4 lg:grid-cols-2">
               <div className="space-y-2">
                 <span className="block text-xs uppercase text-slate-400">Исключить модели выбранной коллекции</span>
-                <div className="flex max-h-48 flex-wrap gap-2 overflow-y-auto rounded border border-slate-800 bg-slate-900/50 p-2">
-                  {models.map((model) => {
+                <Input placeholder="Поиск модели" value={modelSearch} onChange={(event) => setModelSearch(event.target.value)} />
+                <div className="max-h-64 space-y-1 overflow-y-auto rounded border border-slate-800 bg-slate-900/50 p-2">
+                  {visibleModels.map((model) => {
                     const key = `${selectedCollectionId}:${model.name}`;
                     const selected = excludedModels.includes(key) || excludedModels.includes(model.name);
                     return (
@@ -229,12 +248,13 @@ export default function TraderPage() {
                         onClick={() => setExcludedModels((current) => selected
                           ? current.filter((name) => name !== key && name !== model.name)
                           : [...current.filter((name) => name !== model.name), key])}
-                        className={`rounded border px-2 py-1 text-xs ${
+                        className={`flex w-full items-center gap-2 rounded border px-2 py-1 text-left text-xs ${
                           selected ? 'border-red-500 bg-red-700 text-white' : 'border-slate-700 bg-slate-800 text-slate-300'
                         }`}
                       >
-                        {model.name}
-                        {model.floor_price && <span className="ml-1 opacity-60">({model.floor_price})</span>}
+                        {model.photo_url ? <img src={model.photo_url} alt="" className="h-8 w-8 rounded object-cover" /> : <span className="h-8 w-8 rounded bg-slate-700" />}
+                        <span className="flex-1">{model.name}</span>
+                        {model.floor_price && <span className="opacity-60">Floor: {model.floor_price}</span>}
                       </button>
                     );
                   })}
@@ -243,8 +263,9 @@ export default function TraderPage() {
               </div>
               <div className="space-y-2">
                 <span className="block text-xs uppercase text-slate-400">Исключить фоны выбранной коллекции</span>
-                <div className="flex max-h-48 flex-wrap gap-2 overflow-y-auto rounded border border-slate-800 bg-slate-900/50 p-2">
-                  {backdrops.map((backdrop) => {
+                <Input placeholder="Поиск фона" value={backdropSearch} onChange={(event) => setBackdropSearch(event.target.value)} />
+                <div className="max-h-64 space-y-1 overflow-y-auto rounded border border-slate-800 bg-slate-900/50 p-2">
+                  {visibleBackdrops.map((backdrop) => {
                     const key = `${selectedCollectionId}:${backdrop.name}`;
                     const selected = excludedBackdrops.includes(key) || excludedBackdrops.includes(backdrop.name);
                     return (
@@ -254,12 +275,13 @@ export default function TraderPage() {
                         onClick={() => setExcludedBackdrops((current) => selected
                           ? current.filter((name) => name !== key && name !== backdrop.name)
                           : [...current.filter((name) => name !== backdrop.name), key])}
-                        className={`rounded border px-2 py-1 text-xs ${
+                        className={`flex w-full items-center gap-2 rounded border px-2 py-1 text-left text-xs ${
                           selected ? 'border-red-500 bg-red-700 text-white' : 'border-slate-700 bg-slate-800 text-slate-300'
                         }`}
                       >
-                        {backdrop.name}
-                        {backdrop.floor_price && <span className="ml-1 opacity-60">({backdrop.floor_price})</span>}
+                        {backdrop.photo_url ? <img src={backdrop.photo_url} alt="" className="h-8 w-8 rounded object-cover" /> : <span className="h-8 w-8 rounded bg-slate-700" />}
+                        <span className="flex-1">{backdrop.name}</span>
+                        {backdrop.floor_price && <span className="opacity-60">Floor: {backdrop.floor_price}</span>}
                       </button>
                     );
                   })}

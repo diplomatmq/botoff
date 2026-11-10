@@ -23,18 +23,19 @@ class TelegramMessage:
 
 
 DEFAULT_EVENTS = {
-    "offer_created": True,
-    "offer_updated": True,
-    "offer_cancelled": True,
-    "outbid": True,
-    "limit_reached": True,
-    "insufficient_funds": True,
-    "attribute_offers_unavailable": True,
-    "api_error": True,
-    "connection_lost": True,
-    "worker_stopped": True,
-    "rule_paused": True,
-    "first_place_unconfirmed": True,
+    "offer_filled": True,
+    "offer_created": False,
+    "offer_updated": False,
+    "offer_cancelled": False,
+    "outbid": False,
+    "limit_reached": False,
+    "insufficient_funds": False,
+    "attribute_offers_unavailable": False,
+    "api_error": False,
+    "connection_lost": False,
+    "worker_stopped": False,
+    "rule_paused": False,
+    "first_place_unconfirmed": False,
     "emergency_stop": True,
 }
 
@@ -113,7 +114,7 @@ async def notify(
         await session.flush()
 
     chat_id = settings.telegram_chat_id or get_settings().telegram_default_chat_id
-    if settings.telegram_enabled and chat_id:
+    if settings.telegram_enabled and chat_id and event == "offer_filled":
         session.info.setdefault(OUTBOX_KEY, []).append(
             TelegramMessage(chat_id=chat_id, text=f"{title}\n{message}")
         )

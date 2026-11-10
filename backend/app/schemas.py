@@ -198,6 +198,7 @@ class CollectionOut(BaseModel):
 
 class ModelOut(BaseModel):
     name: str
+    photo_url: str | None
     floor_price: str | None
     max_offer: str | None
 

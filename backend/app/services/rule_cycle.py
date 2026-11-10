@@ -103,7 +103,13 @@ async def run_rule_cycle(
     own_row = _pick_own_row(own_rows, snapshot.own_offer)
 
     if snapshot.own_offer is not None and own_row is not None:
-        await sync_offer_row(session, own_row, snapshot.own_offer, rank=snapshot.own_rank)
+        await sync_offer_row(
+            session,
+            own_row,
+            snapshot.own_offer,
+            rank=snapshot.own_rank,
+            wallet_balance=available_balance,
+        )
 
     if snapshot.rate_limited:
         rule.last_position_status = PositionStatus.RATE_LIMITED.value

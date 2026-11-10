@@ -94,11 +94,23 @@ export default function RulesPage() {
   const [form, setForm] = useState<RuleForm>(EMPTY_FORM);
   const [availableModels, setAvailableModels] = useState<CollectionModel[]>([]);
   const [availableBackdrops, setAvailableBackdrops] = useState<CollectionAttribute[]>([]);
+  const [collectionSearch, setCollectionSearch] = useState('');
+  const [modelSearch, setModelSearch] = useState('');
+  const [backdropSearch, setBackdropSearch] = useState('');
   const [refreshingCatalog, setRefreshingCatalog] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const [preview, setPreview] = useState<DryRunPreview | null>(null);
   const isFirstPlace = form.strategy === 'hold_first_place';
+  const visibleCollections = collections.filter((item) =>
+    item.name.toLowerCase().includes(collectionSearch.trim().toLowerCase()),
+  );
+  const visibleModels = availableModels.filter((item) =>
+    item.name.toLowerCase().includes(modelSearch.trim().toLowerCase()),
+  );
+  const visibleBackdrops = availableBackdrops.filter((item) =>
+    item.name.toLowerCase().includes(backdropSearch.trim().toLowerCase()),
+  );
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -409,13 +421,14 @@ export default function RulesPage() {
             </label>}
             {!isFirstPlace && <label className="block text-sm">
               <span className="mb-1 block text-xs uppercase text-slate-400">Коллекция</span>
+              <Input className="mb-2" placeholder="Поиск коллекции" value={collectionSearch} onChange={(event) => setCollectionSearch(event.target.value)} />
               <Select
                 value={form.collection_id}
                 onChange={(event) => setField('collection_id', event.target.value)}
                 required
               >
                 <option value="">Выберите коллекцию</option>
-                {collections.map((collection) => (
+                {visibleCollections.map((collection) => (
                   <option key={collection.id} value={collection.id}>
                     {collection.name}
                   </option>
@@ -447,22 +460,25 @@ export default function RulesPage() {
             </label>}
             <div className="md:col-span-2">
               <span className="mb-1 block text-xs uppercase text-slate-400">Модели (выберите из списка)</span>
+              <Input className="mb-2" placeholder="Поиск модели" value={modelSearch} onChange={(event) => setModelSearch(event.target.value)} />
               {availableModels.length > 0 ? (
-                <div className="flex flex-wrap gap-2 max-h-40 overflow-y-auto p-2 border border-slate-800 rounded bg-slate-900/50">
-                  {availableModels.map((m) => {
+                <div className="max-h-64 space-y-1 overflow-y-auto rounded border border-slate-800 bg-slate-900/50 p-2">
+                  {visibleModels.map((m) => {
                     const selected = splitList(form.models).includes(m.name);
                     return (
                       <button
                         key={m.name}
                         type="button"
                         onClick={() => toggleModel(m.name)}
-                        className={`px-2 py-1 text-xs rounded border transition-colors ${
+                        className={`flex w-full items-center gap-2 rounded border px-2 py-1 text-left text-xs transition-colors ${
                           selected
                             ? 'bg-blue-600 border-blue-500 text-white'
                             : 'bg-slate-800 border-slate-700 text-slate-300 hover:border-slate-500'
                         }`}
                       >
-                        {m.name} {m.floor_price && <span className="opacity-60 ml-1">({m.floor_price})</span>}
+                        {m.photo_url ? <img src={m.photo_url} alt="" className="h-8 w-8 rounded object-cover" /> : <span className="h-8 w-8 rounded bg-slate-700" />}
+                        <span className="flex-1">{m.name}</span>
+                        {m.floor_price && <span className="opacity-60">Floor: {m.floor_price}</span>}
                       </button>
                     );
                   })}
@@ -483,22 +499,25 @@ export default function RulesPage() {
             </label>}
             <div className="md:col-span-2">
               <span className="mb-1 block text-xs uppercase text-slate-400">Фоны (выберите из списка)</span>
+              <Input className="mb-2" placeholder="Поиск фона" value={backdropSearch} onChange={(event) => setBackdropSearch(event.target.value)} />
               {availableBackdrops.length > 0 ? (
-                <div className="flex max-h-40 flex-wrap gap-2 overflow-y-auto rounded border border-slate-800 bg-slate-900/50 p-2">
-                  {availableBackdrops.map((backdrop) => {
+                <div className="max-h-64 space-y-1 overflow-y-auto rounded border border-slate-800 bg-slate-900/50 p-2">
+                  {visibleBackdrops.map((backdrop) => {
                     const selected = splitList(form.backdrops).includes(backdrop.name);
                     return (
                       <button
                         key={backdrop.name}
                         type="button"
                         onClick={() => toggleBackdrop(backdrop.name)}
-                        className={`rounded border px-2 py-1 text-xs transition-colors ${
+                        className={`flex w-full items-center gap-2 rounded border px-2 py-1 text-left text-xs transition-colors ${
                           selected
                             ? 'border-blue-500 bg-blue-600 text-white'
                             : 'border-slate-700 bg-slate-800 text-slate-300 hover:border-slate-500'
                         }`}
                       >
-                        {backdrop.name} {backdrop.floor_price && <span className="ml-1 opacity-60">({backdrop.floor_price})</span>}
+                        {backdrop.photo_url ? <img src={backdrop.photo_url} alt="" className="h-8 w-8 rounded object-cover" /> : <span className="h-8 w-8 rounded bg-slate-700" />}
+                        <span className="flex-1">{backdrop.name}</span>
+                        {backdrop.floor_price && <span className="opacity-60">Floor: {backdrop.floor_price}</span>}
                       </button>
                     );
                   })}

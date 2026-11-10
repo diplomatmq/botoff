@@ -57,6 +57,7 @@ export interface Collection {
 
 export interface CollectionModel {
   name: string;
+  photo_url: string | null;
   floor_price: string | null;
   max_offer: string | null;
 }

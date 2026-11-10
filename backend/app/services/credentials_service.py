@@ -82,6 +82,19 @@ async def disable_credential(session: AsyncSession, credential: ApiCredential, *
     )
 
 
+async def delete_credential(session: AsyncSession, credential: ApiCredential, *, user_id, actor: str = "user") -> None:
+    await audit.record(
+        session,
+        action=AuditAction.CREDENTIAL_DISABLED.value,
+        message=f"API-ключ удалён ({credential.token_hint})",
+        actor=actor,
+        user_id=user_id,
+        entity_type="api_credential",
+        entity_id=credential.id,
+    )
+    await session.delete(credential)
+
+
 async def check_credential(
     session: AsyncSession,
     credential: ApiCredential,

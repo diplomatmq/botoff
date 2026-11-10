@@ -75,6 +75,12 @@ def test_model_rule_considers_competitor_with_specific_backdrop():
     assert offer_matches_rule(other_model, rule) is False
 
 
+def test_model_rule_ignores_offer_scoped_only_to_backdrop():
+    rule = make_rule(models=["Cat"])
+    backdrop_only = {"scope": {"backdrops": ["Black"]}}
+    assert offer_matches_rule(backdrop_only, rule) is False
+
+
 def test_committed_amount_counts_pending_only():
     pending = ManagedOffer(
         collection_id="c",

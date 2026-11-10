@@ -14,6 +14,16 @@ from app.portals.errors import PortalsError
 logger = logging.getLogger("portals.collections")
 
 
+def _photo_url(item: dict[str, Any]) -> str | None:
+    for key in ("photo_url", "image_url", "image", "thumbnail_url", "url"):
+        value = item.get(key)
+        if isinstance(value, dict):
+            value = value.get("url") or value.get("src")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
 def _max_offer(item: dict[str, Any]) -> Any:
     nested_offers = item.get("offers")
     if isinstance(nested_offers, list):
@@ -201,7 +211,7 @@ async def refresh_catalog(session: AsyncSession, gateway: PortalsGateway) -> dic
             updated += 1
         row.name = str(item.get("name") or row.name or cid)[:255]
         row.short_name = (item.get("short_name") or None)
-        row.photo_url = item.get("photo_url")
+        row.photo_url = _photo_url(item) or row.photo_url
         row.floor_price = floor
         row.max_offer = to_decimal(_max_offer(offer_info)) or row.max_offer
         supply = item.get("supply")
@@ -282,6 +292,7 @@ async def _apply_attribute_floors(session: AsyncSession, payload: Any) -> dict[s
             row = ModelCache(collection_id=collection_id, name=str(name)[:255])
             session.add(row)
             existing_models[key] = row
+        row.photo_url = _photo_url(entry) or row.photo_url
         row.floor_price = to_decimal(price) or row.floor_price
         row.max_offer = to_decimal(_max_offer(entry)) or row.max_offer
         row.source = "attribute_floors"

@@ -152,7 +152,7 @@ export default function CollectionsPage() {
                 <table className="w-full">
                   <thead>
                     <tr className="border-b border-slate-800">
-                      <Th>Название</Th>
+                      <Th>Коллекция</Th>
                       <Th>Floor</Th>
                       <Th>Макс. оффер</Th>
                       <Th>Моделей</Th>
@@ -168,7 +168,16 @@ export default function CollectionsPage() {
                           selected?.id === item.id ? 'bg-slate-800/60' : ''
                         }`}
                       >
-                        <Td>{item.name}</Td>
+                        <Td>
+                          <div className="flex items-center gap-2">
+                            {item.photo_url ? (
+                              <img src={item.photo_url} alt="" className="h-10 w-10 rounded object-cover" />
+                            ) : (
+                              <div className="h-10 w-10 rounded bg-slate-800" />
+                            )}
+                            <span>{item.name}</span>
+                          </div>
+                        </Td>
                         <Td>{formatMoney(item.floor_price)}</Td>
                         <Td>{formatMoney(item.max_offer)}</Td>
                         <Td>{item.models_count}</Td>
@@ -219,7 +228,16 @@ export default function CollectionsPage() {
                   <tbody>
                     {models.map((model) => (
                       <tr key={model.name} className="border-b border-slate-800/60">
-                        <Td>{model.name}</Td>
+                        <Td>
+                          <div className="flex items-center gap-2">
+                            {model.photo_url ? (
+                              <img src={model.photo_url} alt="" className="h-9 w-9 rounded object-cover" />
+                            ) : (
+                              <div className="h-9 w-9 rounded bg-slate-800" />
+                            )}
+                            <span>{model.name}</span>
+                          </div>
+                        </Td>
                         <Td>{formatMoney(model.floor_price)}</Td>
                         <Td>{formatMoney(model.max_offer)}</Td>
                       </tr>

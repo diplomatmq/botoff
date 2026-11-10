@@ -125,7 +125,7 @@ async def disable_credential(
     session: AsyncSession = Depends(get_db),
 ) -> MessageOut:
     credential = await _own_credential(session, context.user.id, credential_id)
-    await credentials_service.disable_credential(
+    await credentials_service.delete_credential(
         session, credential, user_id=context.user.id, actor=context.user.username
     )
-    return MessageOut(message="Ключ отключён")
+    return MessageOut(message="Ключ удалён")

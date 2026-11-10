@@ -305,7 +305,7 @@ async def run(
             None,
         )
         if row is not None and own_offer is not None:
-            await sync_offer_row(session, row, own_offer, rank=None)
+            await sync_offer_row(session, row, own_offer, rank=None, wallet_balance=available)
             if row.status != OfferStatus.PENDING.value:
                 by_collection.pop(collection.id, None)
                 continue

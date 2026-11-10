@@ -155,6 +155,7 @@ class ModelCache(Base, TimestampMixin):
         ForeignKey("collections_cache.id", ondelete="CASCADE"), nullable=False, index=True
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    photo_url: Mapped[str | None] = mapped_column(Text)
     floor_price: Mapped[Decimal | None] = mapped_column(MONEY)
     max_offer: Mapped[Decimal | None] = mapped_column(MONEY)
     source: Mapped[str] = mapped_column(String(32), default="attribute_floors", nullable=False)

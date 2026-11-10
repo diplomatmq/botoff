@@ -19,9 +19,10 @@ from app.models import (
     CollectionCache,
     ManagedOffer,
     MarketSnapshot,
+    ModelCache,
     PurchasedGift,
 )
-from app.money import ZERO, to_decimal
+from app.money import ZERO, money_str, to_decimal
 from app.notifications import service as notifications
 from app.portals.client import PortalsGateway
 from app.portals.errors import PortalsError, PortalsRateLimited, is_trait_unavailable
@@ -135,6 +136,14 @@ def offer_matches_rule(offer: dict[str, Any], rule: AutomationRule) -> bool:
     if rule_backdrops and offer_backdrops and not (offer_backdrops & rule_backdrops):
         return False
     if rule_symbols and offer_symbols and not (offer_symbols & rule_symbols):
+        return False
+    # A trait offer scoped only to an unselected attribute does not compete
+    # with a rule for another attribute. Broad offers remain applicable.
+    if rule_models and not offer_models and (offer_backdrops or offer_symbols):
+        return False
+    if rule_backdrops and not offer_backdrops and (offer_models or offer_symbols):
+        return False
+    if rule_symbols and not offer_symbols and (offer_models or offer_backdrops):
         return False
     return True
 
@@ -502,6 +511,7 @@ async def sync_offer_row(
     offer: dict[str, Any] | None,
     *,
     rank: int | None,
+    wallet_balance: Decimal | None = None,
 ) -> None:
     now = datetime.now(UTC)
     row.last_synced_at = now
@@ -532,6 +542,7 @@ async def sync_offer_row(
             row,
             offer,
             previous_nfts=previous_nfts,
+            wallet_balance=wallet_balance,
         )
 
 
@@ -541,6 +552,7 @@ async def _record_purchases_and_stop_rule(
     offer: dict[str, Any],
     *,
     previous_nfts: int,
+    wallet_balance: Decimal | None = None,
 ) -> None:
     purchased_count = row.current_nfts - previous_nfts
     items: list[dict[str, Any]] = []
@@ -584,12 +596,42 @@ async def _record_purchases_and_stop_rule(
                 )
             )
 
+    model_names = [
+        str(value)
+        for value in (row.scope or {}).get("models") or []
+    ]
+    model_floor: Decimal | None = None
+    if model_names:
+        model_floor = await session.scalar(
+            select(ModelCache.floor_price)
+            .where(
+                ModelCache.collection_id == row.collection_id,
+                ModelCache.name.in_(model_names),
+            )
+            .order_by(ModelCache.floor_price.desc())
+            .limit(1)
+        )
+    floor_text = money_str(model_floor) if model_floor is not None else "—"
+    purchase_amount = row.amount * purchased_count
+    reported_balance = wallet_balance
+    if reported_balance is None:
+        reported_balance = (
+            to_decimal(offer.get("balance"))
+            or to_decimal(offer.get("wallet_balance"))
+            or to_decimal(offer.get("available_balance"))
+        )
+    balance_text = money_str(reported_balance) if reported_balance is not None else "—"
     await notifications.notify(
         session,
         user_id=row.user_id,
         event="offer_filled",
         title="Оффер исполнен",
-        message=f"По офферу {row.external_offer_id} куплено подарков: {purchased_count}",
+        message=(
+            f"Куплено: {purchased_count} шт. на {money_str(purchase_amount)} GRAM\n"
+            f"Цена за штуку: {money_str(row.amount)} GRAM\n"
+            f"Floor модели: {floor_text} GRAM\n"
+            f"Баланс: {balance_text} GRAM"
+        ),
         level="success",
     )
 

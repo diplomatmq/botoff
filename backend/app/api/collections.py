@@ -96,6 +96,7 @@ async def list_models(
     return [
         ModelOut(
             name=row.name,
+            photo_url=row.photo_url,
             floor_price=money_str(row.floor_price) if row.floor_price is not None else None,
             max_offer=money_str(row.max_offer) if row.max_offer is not None else None,
         )
@@ -126,6 +127,7 @@ async def list_backdrops(
     return [
         ModelOut(
             name=row["name"],
+            photo_url=collections_service._photo_url(row),
             floor_price=money_str(row["floor_price"]) if row.get("floor_price") is not None else None,
             max_offer=None,
         )

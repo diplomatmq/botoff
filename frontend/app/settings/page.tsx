@@ -379,7 +379,7 @@ export default function SettingsPage() {
                         Сделать основным
                       </Button>
                       <Button variant="danger" onClick={() => void disableCredential(credential)}>
-                        Отключить
+                        Удалить
                       </Button>
                     </div>
                   </td>
