@@ -124,6 +124,7 @@ def attribute_out(rows: list[dict]) -> list[ModelOut]:
 @router.get("/{collection_id}/backdrops", response_model=list[ModelOut])
 async def list_backdrops(
     collection_id: str,
+    models: str | None = Query(default=None, max_length=4096),
     context: AuthContext = Depends(require_csrf),
     session: AsyncSession = Depends(get_db),
 ) -> list[ModelOut]:
@@ -131,7 +132,10 @@ async def list_backdrops(
     if credential is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Сначала подключите API-ключ Portals")
     gateway = build_gateway(credential)
-    rows = await collections_service.resolve_attribute_entries(session, gateway, collection_id, "backdrop")
+    model_names = [item.strip() for item in (models or "").split(",") if item.strip()]
+    rows = await collections_service.resolve_attribute_entries(
+        session, gateway, collection_id, "backdrop", model_names=model_names
+    )
     return attribute_out(rows)
 
 

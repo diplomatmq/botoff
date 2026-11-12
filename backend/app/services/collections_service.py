@@ -254,6 +254,7 @@ async def resolve_attribute_entries(
     gateway: PortalsGateway,
     collection_id: str,
     attribute_type: str,
+    model_names: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Resolve backdrops/symbols of a collection from live Portals data.
 
@@ -267,10 +268,29 @@ async def resolve_attribute_entries(
         collection_id,
     ]
 
+    source_errors: list[PortalsError] = []
+    requested_models = [
+        str(name).strip() for name in model_names or [] if str(name).strip()
+    ]
+    if attribute_type == "backdrop" and requested_models:
+        try:
+            rows = _model_background_entries(
+                await gateway.model_background_floors(requested_models)
+            )
+        except PortalsError as exc:
+            source_errors.append(exc)
+            logger.warning(
+                "selected model backgrounds unavailable for %s: %s", collection_id, exc
+            )
+            rows = []
+        if rows:
+            return rows
+
     attribute_payload: Any = None
     try:
         attribute_payload = await gateway.attribute_floors()
     except PortalsError as exc:
+        source_errors.append(exc)
         logger.warning("attribute floors unavailable for %s: %s", collection_id, exc)
 
     rows = collection_attribute_entries(attribute_payload, attribute_type, names)
@@ -281,16 +301,22 @@ async def resolve_attribute_entries(
         try:
             rows = _attribute_entries((await gateway.backdrop_floors() or {}).get("floorPrices"))
         except PortalsError as exc:
+            source_errors.append(exc)
             logger.warning("backdrop floors unavailable for %s: %s", collection_id, exc)
             rows = []
         if rows:
             return rows
 
-        model_names = [row.name for row in await list_models(session, collection_id)]
-        if model_names:
+        cached_model_names = requested_models or [
+            row.name for row in await list_models(session, collection_id)
+        ]
+        if cached_model_names and not requested_models:
             try:
-                rows = _model_background_entries(await gateway.model_background_floors(model_names))
+                rows = _model_background_entries(
+                    await gateway.model_background_floors(cached_model_names)
+                )
             except PortalsError as exc:
+                source_errors.append(exc)
                 logger.warning(
                     "model background floors unavailable for %s: %s", collection_id, exc
                 )
@@ -302,6 +328,8 @@ async def resolve_attribute_entries(
         rows = extract_attribute_entries(attribute_payload, attribute_type, collection_id)
         if rows:
             return rows
+    if source_errors:
+        raise source_errors[-1]
     return []
 
 

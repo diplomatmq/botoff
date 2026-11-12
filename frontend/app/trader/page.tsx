@@ -42,6 +42,8 @@ export default function TraderPage() {
   const [selectedCollectionId, setSelectedCollectionId] = useState('');
   const [models, setModels] = useState<CollectionAttribute[]>([]);
   const [backdrops, setBackdrops] = useState<CollectionAttribute[]>([]);
+  const [backdropsLoading, setBackdropsLoading] = useState(false);
+  const [backdropsError, setBackdropsError] = useState<string | null>(null);
   const [symbols, setSymbols] = useState<CollectionAttribute[]>([]);
   const [excludedCollections, setExcludedCollections] = useState<string[]>([]);
   const [excludedModels, setExcludedModels] = useState<string[]>([]);
@@ -86,21 +88,40 @@ export default function TraderPage() {
     if (!selectedCollectionId) {
       setModels([]);
       setBackdrops([]);
+      setBackdropsError(null);
+      setBackdropsLoading(false);
       setSymbols([]);
       return;
     }
     let active = true;
+    setBackdropsLoading(true);
+    setBackdropsError(null);
     void Promise.all([
       apiFetch<CollectionAttribute[]>(`/api/collections/${selectedCollectionId}/models`).catch(() => []),
-      apiFetch<CollectionAttribute[]>(`/api/collections/${selectedCollectionId}/backdrops`).catch(() => []),
       apiFetch<CollectionAttribute[]>(`/api/collections/${selectedCollectionId}/symbols`).catch(() => []),
-    ]).then(([collectionModels, collectionBackdrops, collectionSymbols]) => {
+    ]).then(([collectionModels, collectionSymbols]) => {
       if (active) {
         setModels(collectionModels.sort((left, right) => left.name.localeCompare(right.name)));
-        setBackdrops(collectionBackdrops.sort((left, right) => left.name.localeCompare(right.name)));
         setSymbols(collectionSymbols.sort((left, right) => left.name.localeCompare(right.name)));
       }
     });
+    void apiFetch<CollectionAttribute[]>(`/api/collections/${selectedCollectionId}/backdrops`)
+      .then((collectionBackdrops) => {
+        if (active) {
+          setBackdrops(collectionBackdrops.sort((left, right) => left.name.localeCompare(right.name)));
+        }
+      })
+      .catch((err) => {
+        if (active) {
+          setBackdrops([]);
+          setBackdropsError(err instanceof Error ? err.message : 'Не удалось загрузить фоны');
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setBackdropsLoading(false);
+        }
+      });
     return () => {
       active = false;
     };
@@ -298,7 +319,17 @@ export default function TraderPage() {
                       </button>
                     );
                   })}
-                  {backdrops.length === 0 && <span className="text-xs italic text-slate-500">{selectedCollectionId ? 'Фоны не загружены' : 'Сначала выберите коллекцию'}</span>}
+                  {backdrops.length === 0 && (
+                    <span className="text-xs italic text-slate-500">
+                      {backdropsError
+                        ? `Ошибка загрузки фонов: ${backdropsError}`
+                        : backdropsLoading
+                          ? 'Загрузка фонов из Portals...'
+                          : selectedCollectionId
+                            ? 'Portals не вернул фоны для этой коллекции'
+                            : 'Сначала выберите коллекцию'}
+                    </span>
+                  )}
                 </div>
               </div>
               <div className="space-y-2">

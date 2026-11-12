@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 
 import { Shell } from '@/components/Shell';
 import { Alert, Badge, Button, Card, Input, Modal, Select, Spinner, Td, Th, Toggle, type Tone } from '@/components/ui';
@@ -97,6 +97,9 @@ export default function RulesPage() {
   const [availableModels, setAvailableModels] = useState<CollectionModel[]>([]);
   const [availableBackdrops, setAvailableBackdrops] = useState<CollectionAttribute[]>([]);
   const [availableSymbols, setAvailableSymbols] = useState<CollectionAttribute[]>([]);
+  const [backdropsLoading, setBackdropsLoading] = useState(false);
+  const [backdropsError, setBackdropsError] = useState<string | null>(null);
+  const backdropRequestId = useRef(0);
   const [collectionSearch, setCollectionSearch] = useState('');
   const [modelSearch, setModelSearch] = useState('');
   const [backdropSearch, setBackdropSearch] = useState('');
@@ -168,23 +171,52 @@ export default function RulesPage() {
   const loadModels = useCallback(async (collectionId: string) => {
     if (!collectionId) {
       setAvailableModels([]);
-      setAvailableBackdrops([]);
       setAvailableSymbols([]);
       return;
     }
     try {
-      const [models, backdrops, symbols] = await Promise.all([
+      const [models, symbols] = await Promise.all([
         apiFetch<CollectionModel[]>(`/api/collections/${collectionId}/models`).catch(() => []),
-        apiFetch<CollectionAttribute[]>(`/api/collections/${collectionId}/backdrops`).catch(() => []),
         apiFetch<CollectionAttribute[]>(`/api/collections/${collectionId}/symbols`).catch(() => []),
       ]);
       setAvailableModels(models);
-      setAvailableBackdrops(backdrops);
       setAvailableSymbols(symbols);
     } catch {
       setAvailableModels([]);
-      setAvailableBackdrops([]);
       setAvailableSymbols([]);
+    }
+  }, []);
+
+  const loadBackdrops = useCallback(async (collectionId: string, models: string[] = []) => {
+    const requestId = ++backdropRequestId.current;
+    if (!collectionId) {
+      setAvailableBackdrops([]);
+      setBackdropsError(null);
+      setBackdropsLoading(false);
+      return;
+    }
+
+    setBackdropsLoading(true);
+    setBackdropsError(null);
+    const query = models.length > 0
+      ? `?models=${encodeURIComponent(models.join(','))}`
+      : '';
+    try {
+      const rows = await apiFetch<CollectionAttribute[]>(
+        `/api/collections/${collectionId}/backdrops${query}`,
+      );
+      if (requestId === backdropRequestId.current) {
+        setAvailableBackdrops(rows);
+      }
+    } catch (err) {
+      if (requestId === backdropRequestId.current) {
+        setAvailableBackdrops([]);
+        setBackdropsError(err instanceof Error ? err.message : 'Не удалось загрузить фоны');
+      }
+    } finally {
+      if (requestId === backdropRequestId.current) {
+        setBackdropsLoading(false);
+      }
     }
   }, []);
 
@@ -198,8 +230,13 @@ export default function RulesPage() {
       void loadModels(form.collection_id);
     } else {
       setAvailableModels([]);
+      setAvailableSymbols([]);
     }
   }, [form.collection_id, loadModels]);
+
+  useEffect(() => {
+    void loadBackdrops(form.collection_id, splitList(form.models));
+  }, [form.collection_id, form.models, loadBackdrops]);
 
   function openCreate() {
     setEditingId(null);
@@ -453,7 +490,18 @@ export default function RulesPage() {
               <Input className="mb-2" placeholder="Поиск коллекции" value={collectionSearch} onChange={(event) => setCollectionSearch(event.target.value)} />
               <Select
                 value={form.collection_id}
-                onChange={(event) => setField('collection_id', event.target.value)}
+                onChange={(event) => {
+                  setForm((current) => ({
+                    ...current,
+                    collection_id: event.target.value,
+                    models: '',
+                    backdrops: '',
+                    excluded_backdrops: '',
+                    symbols: '',
+                  }));
+                  setAvailableBackdrops([]);
+                  setBackdropsError(null);
+                }}
                 required
               >
                 <option value="">Выберите коллекцию</option>
@@ -553,7 +601,13 @@ export default function RulesPage() {
                 </div>
               ) : (
                 <div className="rounded border border-slate-800 p-2 text-xs italic text-slate-500">
-                  {form.collection_id ? 'Фоны не загружены или отсутствуют' : 'Выберите коллекцию, чтобы увидеть фоны'}
+                  {backdropsError
+                    ? `Ошибка загрузки фонов: ${backdropsError}`
+                    : backdropsLoading
+                      ? 'Загрузка фонов из Portals...'
+                      : form.collection_id
+                        ? 'Portals не вернул фоны для коллекции или выбранной модели'
+                        : 'Выберите коллекцию, чтобы увидеть фоны'}
                 </div>
               )}
               <Input
@@ -593,7 +647,13 @@ export default function RulesPage() {
                 </div>
               ) : (
                 <div className="rounded border border-slate-800 p-2 text-xs italic text-slate-500">
-                  {form.collection_id ? 'Фоны не загружены или отсутствуют' : 'Выберите коллекцию, чтобы увидеть фоны'}
+                  {backdropsError
+                    ? `Ошибка загрузки фонов: ${backdropsError}`
+                    : backdropsLoading
+                      ? 'Загрузка фонов из Portals...'
+                      : form.collection_id
+                        ? 'Portals не вернул фоны для коллекции или выбранной модели'
+                        : 'Выберите коллекцию, чтобы увидеть фоны'}
                 </div>
               )}
               <Input
