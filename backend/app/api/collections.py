@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import AuthContext, get_db, require_csrf
 from app.models import CollectionCache
-from app.money import money_str
+from app.money import money_str, to_decimal
 from app.runtime import build_gateway, get_primary_credential
 from app.schemas import CollectionOut, MessageOut, ModelOut
 from app.services import audit, collections_service
@@ -110,11 +110,13 @@ def attribute_out(rows: list[dict]) -> list[ModelOut]:
                 photo = first if isinstance(first, str) else first.get("url") if isinstance(first, dict) else None
             elif isinstance(photos_data, dict):
                 photo = photos_data.get("url")
+        # Portals returns floor prices as strings, so coerce before formatting.
+        price = to_decimal(row.get("floor_price"))
         result.append(
             ModelOut(
                 name=row["name"],
                 photo_url=photo,
-                floor_price=money_str(row["floor_price"]) if row.get("floor_price") is not None else None,
+                floor_price=money_str(price) if price is not None else None,
                 max_offer=None,
             )
         )

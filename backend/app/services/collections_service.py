@@ -269,6 +269,7 @@ async def resolve_attribute_entries(
     ]
 
     source_errors: list[PortalsError] = []
+    resolved = False
     requested_models = [
         str(name).strip() for name in model_names or [] if str(name).strip()
     ]
@@ -277,6 +278,7 @@ async def resolve_attribute_entries(
             rows = _model_background_entries(
                 await gateway.model_background_floors(requested_models)
             )
+            resolved = True
         except PortalsError as exc:
             source_errors.append(exc)
             logger.warning(
@@ -289,6 +291,7 @@ async def resolve_attribute_entries(
     attribute_payload: Any = None
     try:
         attribute_payload = await gateway.attribute_floors()
+        resolved = True
     except PortalsError as exc:
         source_errors.append(exc)
         logger.warning("attribute floors unavailable for %s: %s", collection_id, exc)
@@ -300,6 +303,7 @@ async def resolve_attribute_entries(
     if attribute_type == "backdrop":
         try:
             rows = _attribute_entries((await gateway.backdrop_floors() or {}).get("floorPrices"))
+            resolved = True
         except PortalsError as exc:
             source_errors.append(exc)
             logger.warning("backdrop floors unavailable for %s: %s", collection_id, exc)
@@ -315,6 +319,7 @@ async def resolve_attribute_entries(
                 rows = _model_background_entries(
                     await gateway.model_background_floors(cached_model_names)
                 )
+                resolved = True
             except PortalsError as exc:
                 source_errors.append(exc)
                 logger.warning(
@@ -328,7 +333,8 @@ async def resolve_attribute_entries(
         rows = extract_attribute_entries(attribute_payload, attribute_type, collection_id)
         if rows:
             return rows
-    if source_errors:
+    # Only report a failure when no source answered at all; an empty answer is not an error.
+    if not resolved and source_errors:
         raise source_errors[-1]
     return []
 
