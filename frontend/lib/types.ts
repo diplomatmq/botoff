@@ -196,6 +196,7 @@ export interface Settings {
   smart_trader_excluded_collections: string[];
   smart_trader_excluded_models: string[];
   smart_trader_excluded_backdrops: string[];
+  smart_trader_excluded_symbols: string[];
   smart_trader_attribute_collection_id: string | null;
 }
 

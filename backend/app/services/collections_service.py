@@ -86,7 +86,7 @@ def _extract_model_entries(payload: Any) -> list[dict[str, Any]]:
 
 
 def extract_attribute_entries(payload: Any, attribute_type: str, collection_id: str) -> list[dict[str, Any]]:
-    """Extract named model/background floor entries from variant Portals payloads."""
+    """Extract named model/background/symbol floor entries from variant Portals payloads."""
     entries: dict[str, dict[str, Any]] = {}
 
     def visit(
@@ -97,8 +97,13 @@ def extract_attribute_entries(payload: Any, attribute_type: str, collection_id: 
         if isinstance(value, dict):
             current = context
             raw_type = str(value.get("type") or value.get("attribute_type") or "").lower()
-            if raw_type in {"model", "background", "backdrop"}:
-                current = "model" if raw_type == "model" else "backdrop"
+            if raw_type in {"model", "background", "backdrop", "symbol"}:
+                if raw_type == "model":
+                    current = "model"
+                elif raw_type in {"background", "backdrop"}:
+                    current = "backdrop"
+                else:
+                    current = "symbol"
             if (
                 current is None
                 and (
@@ -117,6 +122,14 @@ def extract_attribute_entries(payload: Any, attribute_type: str, collection_id: 
                 )
             ):
                 current = "backdrop"
+            if (
+                current is None
+                and (
+                    value.get("symbol_name") is not None
+                    or value.get("symbol") is not None
+                )
+            ):
+                current = "symbol"
             if current == attribute_type:
                 name = (
                     value.get("name")
@@ -125,9 +138,12 @@ def extract_attribute_entries(payload: Any, attribute_type: str, collection_id: 
                     or value.get("model_name")
                     or value.get("background_name")
                     or value.get("backdrop_name")
+                    or value.get("symbol_name")
                 )
                 item_collection = value.get("collection_id") or collection_context or collection_id
                 if name is not None and str(item_collection) == collection_id:
+                    # Store or update the entry with all available data
+                    existing = entries.get(str(name), {})
                     entries[str(name)] = {
                         "name": str(name),
                         "floor_price": (
@@ -135,7 +151,12 @@ def extract_attribute_entries(payload: Any, attribute_type: str, collection_id: 
                             or value.get("floor")
                             or value.get("price")
                             or value.get("amount")
+                            or existing.get("floor_price")
                         ),
+                        "photo_url": _photo_url(value) or existing.get("photo_url"),
+                        "photos": value.get("photos") or existing.get("photos"),
+                        "image_url": value.get("image_url") or existing.get("image_url"),
+                        "thumbnail_url": value.get("thumbnail_url") or existing.get("thumbnail_url"),
                     }
             for key, child in value.items():
                 key_lower = str(key).lower()
@@ -144,11 +165,13 @@ def extract_attribute_entries(payload: Any, attribute_type: str, collection_id: 
                     child_context = "model"
                 elif key_lower in {"backgrounds", "backdrops", "background", "backdrop"}:
                     child_context = "backdrop"
+                elif key_lower in {"symbols", "symbol"}:
+                    child_context = "symbol"
                 if (
                     child_context == attribute_type
                     and isinstance(child, dict)
                     and not any(child.get(field) for field in ("name", "value", attribute_type))
-                    and key_lower not in {"models", "model", "backgrounds", "backdrops", "background", "backdrop"}
+                    and key_lower not in {"models", "model", "backgrounds", "backdrops", "background", "backdrop", "symbols", "symbol"}
                 ):
                     child = {"name": key, **child}
                 child_collection = key if str(key) == collection_id else collection_context

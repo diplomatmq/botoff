@@ -124,15 +124,66 @@ async def list_backdrops(
     except PortalsError as exc:
         logger.warning("backdrop catalog unavailable for %s: %s", collection_id, exc)
         rows = []
-    return [
-        ModelOut(
+    
+    # Enrich with photos from raw attribute_floors data
+    result = []
+    for row in rows:
+        photo = collections_service._photo_url(row)
+        # If no photo found, try to get it from the raw data using alternative keys
+        if not photo and row.get("photos"):
+            photos_data = row.get("photos")
+            if isinstance(photos_data, list) and photos_data:
+                photo = photos_data[0] if isinstance(photos_data[0], str) else None
+            elif isinstance(photos_data, dict):
+                photo = photos_data.get("url")
+        
+        result.append(ModelOut(
             name=row["name"],
-            photo_url=collections_service._photo_url(row),
+            photo_url=photo,
             floor_price=money_str(row["floor_price"]) if row.get("floor_price") is not None else None,
             max_offer=None,
-        )
-        for row in rows
-    ]
+        ))
+    return result
+
+
+@router.get("/{collection_id}/symbols", response_model=list[ModelOut])
+async def list_symbols(
+    collection_id: str,
+    context: AuthContext = Depends(require_csrf),
+    session: AsyncSession = Depends(get_db),
+) -> list[ModelOut]:
+    credential = await get_primary_credential(session, context.user.id)
+    if credential is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Сначала подключите API-ключ Portals")
+    gateway = build_gateway(credential)
+    try:
+        payload = await gateway.model_background_floors(collection_id)
+        rows = collections_service.extract_attribute_entries(payload, "symbol", collection_id)
+        if not rows:
+            rows = collections_service.extract_attribute_entries(
+                await gateway.attribute_floors(), "symbol", collection_id
+            )
+    except PortalsError as exc:
+        logger.warning("symbol catalog unavailable for %s: %s", collection_id, exc)
+        rows = []
+    
+    result = []
+    for row in rows:
+        photo = collections_service._photo_url(row)
+        if not photo and row.get("photos"):
+            photos_data = row.get("photos")
+            if isinstance(photos_data, list) and photos_data:
+                photo = photos_data[0] if isinstance(photos_data[0], str) else None
+            elif isinstance(photos_data, dict):
+                photo = photos_data.get("url")
+        
+        result.append(ModelOut(
+            name=row["name"],
+            photo_url=photo,
+            floor_price=money_str(row["floor_price"]) if row.get("floor_price") is not None else None,
+            max_offer=None,
+        ))
+    return result
 
 
 @router.post("/{collection_id}/models/refresh", response_model=MessageOut)

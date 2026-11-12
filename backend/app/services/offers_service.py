@@ -116,27 +116,53 @@ def offer_scope_attributes(offer: dict[str, Any]) -> dict[str, set[str]]:
 
 
 def offer_matches_rule(offer: dict[str, Any], rule: AutomationRule) -> bool:
+    """
+    Determines if an offer competes with a rule.
+    
+    Key logic:
+    - If rule has NO attributes selected (all empty), it matches ALL offers (broad scope)
+    - If rule has attributes selected, it only matches offers that:
+      a) Have NO attributes specified (broad offers match all rules)
+      b) Have overlapping attributes with the rule
+    
+    Special case for exclusions:
+    - An offer with specific attributes (e.g., specific backdrops) does NOT compete
+      with a rule that has ALL attributes selected (empty list = all items)
+    - But a rule with specific attributes selected will NOT match broad offers
+      when scope_guard is enabled
+    """
     offer_attributes = offer_scope_attributes(offer)
     offer_models = offer_attributes["model"]
     offer_backdrops = offer_attributes["backdrop"]
     offer_symbols = offer_attributes["symbol"]
 
-    if not (offer_models or offer_backdrops or offer_symbols):
+    # Broad offer (no attributes specified) - it's a wildcard
+    offer_is_broad = not (offer_models or offer_backdrops or offer_symbols)
+    
+    # Rule with no attributes selected - matches everything
+    rule_is_broad = not rule_uses_attributes(rule)
+    
+    if rule_is_broad:
+        # Rule wants all items in collection - matches all offers
         return True
 
-    if not rule_uses_attributes(rule):
+    if offer_is_broad:
+        # Broad offer competes with all rules
         return True
 
     rule_models = set(rule.models or [])
     rule_backdrops = set(rule.backdrops or [])
     rule_symbols = set(rule.symbols or [])
 
+    # Check for attribute overlap
+    # If rule specifies models and offer has models, they must overlap
     if rule_models and offer_models and not (offer_models & rule_models):
         return False
     if rule_backdrops and offer_backdrops and not (offer_backdrops & rule_backdrops):
         return False
     if rule_symbols and offer_symbols and not (offer_symbols & rule_symbols):
         return False
+    
     # A trait offer scoped only to an unselected attribute does not compete
     # with a rule for another attribute. Broad offers remain applicable.
     if rule_models and not offer_models and (offer_backdrops or offer_symbols):
@@ -145,6 +171,7 @@ def offer_matches_rule(offer: dict[str, Any], rule: AutomationRule) -> bool:
         return False
     if rule_symbols and not offer_symbols and (offer_models or offer_backdrops):
         return False
+    
     return True
 
 

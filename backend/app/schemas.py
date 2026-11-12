@@ -284,6 +284,7 @@ class SettingsOut(BaseModel):
     smart_trader_excluded_collections: list[str]
     smart_trader_excluded_models: list[str]
     smart_trader_excluded_backdrops: list[str]
+    smart_trader_excluded_symbols: list[str]
     smart_trader_attribute_collection_id: str | None
 
 
@@ -298,12 +299,14 @@ class SettingsUpdate(BaseModel):
     smart_trader_excluded_collections: list[str] | None = None
     smart_trader_excluded_models: list[str] | None = None
     smart_trader_excluded_backdrops: list[str] | None = None
+    smart_trader_excluded_symbols: list[str] | None = None
     smart_trader_attribute_collection_id: str | None = Field(default=None, max_length=64)
 
     @field_validator(
         "smart_trader_excluded_collections",
         "smart_trader_excluded_models",
         "smart_trader_excluded_backdrops",
+        "smart_trader_excluded_symbols",
     )
     @classmethod
     def _clean_trader_exclusions(cls, value: list[str] | None) -> list[str] | None:

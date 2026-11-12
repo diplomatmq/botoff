@@ -94,9 +94,11 @@ export default function RulesPage() {
   const [form, setForm] = useState<RuleForm>(EMPTY_FORM);
   const [availableModels, setAvailableModels] = useState<CollectionModel[]>([]);
   const [availableBackdrops, setAvailableBackdrops] = useState<CollectionAttribute[]>([]);
+  const [availableSymbols, setAvailableSymbols] = useState<CollectionAttribute[]>([]);
   const [collectionSearch, setCollectionSearch] = useState('');
   const [modelSearch, setModelSearch] = useState('');
   const [backdropSearch, setBackdropSearch] = useState('');
+  const [symbolSearch, setSymbolSearch] = useState('');
   const [refreshingCatalog, setRefreshingCatalog] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -110,6 +112,9 @@ export default function RulesPage() {
   );
   const visibleBackdrops = availableBackdrops.filter((item) =>
     item.name.toLowerCase().includes(backdropSearch.trim().toLowerCase()),
+  );
+  const visibleSymbols = availableSymbols.filter((item) =>
+    item.name.toLowerCase().includes(symbolSearch.trim().toLowerCase()),
   );
 
   const load = useCallback(async () => {
@@ -158,18 +163,22 @@ export default function RulesPage() {
     if (!collectionId) {
       setAvailableModels([]);
       setAvailableBackdrops([]);
+      setAvailableSymbols([]);
       return;
     }
     try {
-      const [models, backdrops] = await Promise.all([
+      const [models, backdrops, symbols] = await Promise.all([
         apiFetch<CollectionModel[]>(`/api/collections/${collectionId}/models`).catch(() => []),
         apiFetch<CollectionAttribute[]>(`/api/collections/${collectionId}/backdrops`).catch(() => []),
+        apiFetch<CollectionAttribute[]>(`/api/collections/${collectionId}/symbols`).catch(() => []),
       ]);
       setAvailableModels(models);
       setAvailableBackdrops(backdrops);
+      setAvailableSymbols(symbols);
     } catch {
       setAvailableModels([]);
       setAvailableBackdrops([]);
+      setAvailableSymbols([]);
     }
   }, []);
 
@@ -322,6 +331,12 @@ export default function RulesPage() {
     const current = splitList(form.backdrops);
     const next = current.includes(name) ? current.filter((item) => item !== name) : [...current, name];
     setField('backdrops', next.join(', '));
+  }
+
+  function toggleSymbol(name: string) {
+    const current = splitList(form.symbols);
+    const next = current.includes(name) ? current.filter((item) => item !== name) : [...current, name];
+    setField('symbols', next.join(', '));
   }
 
   return (
@@ -534,10 +549,43 @@ export default function RulesPage() {
                 placeholder="Можно также ввести вручную через запятую"
               />
             </div>
-            <label className="block text-sm">
-              <span className="mb-1 block text-xs uppercase text-slate-400">Символы (через запятую)</span>
-              <Input value={form.symbols} onChange={(event) => setField('symbols', event.target.value)} />
-            </label>
+            <div className="md:col-span-2">
+              <span className="mb-1 block text-xs uppercase text-slate-400">Символы (выберите из списка)</span>
+              <Input className="mb-2" placeholder="Поиск символа" value={symbolSearch} onChange={(event) => setSymbolSearch(event.target.value)} />
+              {availableSymbols.length > 0 ? (
+                <div className="max-h-64 space-y-1 overflow-y-auto rounded border border-slate-800 bg-slate-900/50 p-2">
+                  {visibleSymbols.map((symbol) => {
+                    const selected = splitList(form.symbols).includes(symbol.name);
+                    return (
+                      <button
+                        key={symbol.name}
+                        type="button"
+                        onClick={() => toggleSymbol(symbol.name)}
+                        className={`flex w-full items-center gap-2 rounded border px-2 py-1 text-left text-xs transition-colors ${
+                          selected
+                            ? 'border-blue-500 bg-blue-600 text-white'
+                            : 'border-slate-700 bg-slate-800 text-slate-300 hover:border-slate-500'
+                        }`}
+                      >
+                        {symbol.photo_url ? <img src={symbol.photo_url} alt="" className="h-8 w-8 rounded object-cover" /> : <span className="h-8 w-8 rounded bg-slate-700" />}
+                        <span className="flex-1">{symbol.name}</span>
+                        {symbol.floor_price && <span className="opacity-60">Floor: {symbol.floor_price}</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="rounded border border-slate-800 p-2 text-xs italic text-slate-500">
+                  {form.collection_id ? 'Символы не загружены или отсутствуют' : 'Выберите коллекцию, чтобы увидеть символы'}
+                </div>
+              )}
+              <Input
+                className="mt-2"
+                value={form.symbols}
+                onChange={(event) => setField('symbols', event.target.value)}
+                placeholder="Можно также ввести вручную через запятую"
+              />
+            </div>
             <label className="block text-sm">
               <span className="mb-1 block text-xs uppercase text-slate-400">Макс. цена (% от пола)</span>
               <Input

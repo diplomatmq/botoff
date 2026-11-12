@@ -42,12 +42,15 @@ export default function TraderPage() {
   const [selectedCollectionId, setSelectedCollectionId] = useState('');
   const [models, setModels] = useState<CollectionAttribute[]>([]);
   const [backdrops, setBackdrops] = useState<CollectionAttribute[]>([]);
+  const [symbols, setSymbols] = useState<CollectionAttribute[]>([]);
   const [excludedCollections, setExcludedCollections] = useState<string[]>([]);
   const [excludedModels, setExcludedModels] = useState<string[]>([]);
   const [excludedBackdrops, setExcludedBackdrops] = useState<string[]>([]);
+  const [excludedSymbols, setExcludedSymbols] = useState<string[]>([]);
   const [collectionSearch, setCollectionSearch] = useState('');
   const [modelSearch, setModelSearch] = useState('');
   const [backdropSearch, setBackdropSearch] = useState('');
+  const [symbolSearch, setSymbolSearch] = useState('');
 
   async function load() {
     try {
@@ -59,6 +62,7 @@ export default function TraderPage() {
       setExcludedCollections(value.smart_trader_excluded_collections);
       setExcludedModels(value.smart_trader_excluded_models);
       setExcludedBackdrops(value.smart_trader_excluded_backdrops);
+      setExcludedSymbols(value.smart_trader_excluded_symbols || []);
       const availableCollections = await apiFetch<Collection[]>('/api/collections?only_offers=true');
       setCollections(availableCollections);
       setSelectedCollectionId((current) => (
@@ -82,16 +86,19 @@ export default function TraderPage() {
     if (!selectedCollectionId) {
       setModels([]);
       setBackdrops([]);
+      setSymbols([]);
       return;
     }
     let active = true;
     void Promise.all([
       apiFetch<CollectionAttribute[]>(`/api/collections/${selectedCollectionId}/models`).catch(() => []),
       apiFetch<CollectionAttribute[]>(`/api/collections/${selectedCollectionId}/backdrops`).catch(() => []),
-    ]).then(([collectionModels, collectionBackdrops]) => {
+      apiFetch<CollectionAttribute[]>(`/api/collections/${selectedCollectionId}/symbols`).catch(() => []),
+    ]).then(([collectionModels, collectionBackdrops, collectionSymbols]) => {
       if (active) {
         setModels(collectionModels.sort((left, right) => left.name.localeCompare(right.name)));
         setBackdrops(collectionBackdrops.sort((left, right) => left.name.localeCompare(right.name)));
+        setSymbols(collectionSymbols.sort((left, right) => left.name.localeCompare(right.name)));
       }
     });
     return () => {
@@ -111,6 +118,9 @@ export default function TraderPage() {
   const visibleBackdrops = backdrops.filter((backdrop) =>
     backdrop.name.toLowerCase().includes(backdropSearch.trim().toLowerCase()),
   );
+  const visibleSymbols = symbols.filter((symbol) =>
+    symbol.name.toLowerCase().includes(symbolSearch.trim().toLowerCase()),
+  );
   const savedState = useMemo(() => JSON.stringify({
     enabled: settings?.smart_trader_enabled,
     spread: normalizedNumber(settings?.smart_trader_min_spread_percent) ?? 0,
@@ -118,6 +128,7 @@ export default function TraderPage() {
     excludedCollections: normalizedList(settings?.smart_trader_excluded_collections),
     excludedModels: normalizedList(settings?.smart_trader_excluded_models),
     excludedBackdrops: normalizedList(settings?.smart_trader_excluded_backdrops),
+    excludedSymbols: normalizedList(settings?.smart_trader_excluded_symbols),
     selectedCollectionId: settings?.smart_trader_attribute_collection_id,
   }), [settings]);
   const currentState = JSON.stringify({
@@ -127,6 +138,7 @@ export default function TraderPage() {
     excludedCollections: normalizedList(excludedCollections),
     excludedModels: normalizedList(excludedModels),
     excludedBackdrops: normalizedList(excludedBackdrops),
+    excludedSymbols: normalizedList(excludedSymbols),
     selectedCollectionId,
   });
   const hasUnsavedChanges = settings !== null && savedState !== currentState;
@@ -143,6 +155,7 @@ export default function TraderPage() {
           smart_trader_excluded_collections: excludedCollections,
           smart_trader_excluded_models: excludedModels,
           smart_trader_excluded_backdrops: excludedBackdrops,
+          smart_trader_excluded_symbols: excludedSymbols,
           smart_trader_attribute_collection_id: selectedCollectionId || null,
         }),
       });
@@ -286,6 +299,33 @@ export default function TraderPage() {
                     );
                   })}
                   {backdrops.length === 0 && <span className="text-xs italic text-slate-500">{selectedCollectionId ? 'Фоны не загружены' : 'Сначала выберите коллекцию'}</span>}
+                </div>
+              </div>
+              <div className="space-y-2">
+                <span className="block text-xs uppercase text-slate-400">Исключить символы выбранной коллекции</span>
+                <Input placeholder="Поиск символа" value={symbolSearch} onChange={(event) => setSymbolSearch(event.target.value)} />
+                <div className="max-h-64 space-y-1 overflow-y-auto rounded border border-slate-800 bg-slate-900/50 p-2">
+                  {visibleSymbols.map((symbol) => {
+                    const key = `${selectedCollectionId}:${symbol.name}`;
+                    const selected = excludedSymbols.includes(key) || excludedSymbols.includes(symbol.name);
+                    return (
+                      <button
+                        key={symbol.name}
+                        type="button"
+                        onClick={() => setExcludedSymbols((current) => selected
+                          ? current.filter((name) => name !== key && name !== symbol.name)
+                          : [...current.filter((name) => name !== symbol.name), key])}
+                        className={`flex w-full items-center gap-2 rounded border px-2 py-1 text-left text-xs ${
+                          selected ? 'border-red-500 bg-red-700 text-white' : 'border-slate-700 bg-slate-800 text-slate-300'
+                        }`}
+                      >
+                        {symbol.photo_url ? <img src={symbol.photo_url} alt="" className="h-8 w-8 rounded object-cover" /> : <span className="h-8 w-8 rounded bg-slate-700" />}
+                        <span className="flex-1">{symbol.name}</span>
+                        {symbol.floor_price && <span className="opacity-60">Floor: {symbol.floor_price}</span>}
+                      </button>
+                    );
+                  })}
+                  {symbols.length === 0 && <span className="text-xs italic text-slate-500">{selectedCollectionId ? 'Символы не загружены' : 'Сначала выберите коллекцию'}</span>}
                 </div>
               </div>
             </div>

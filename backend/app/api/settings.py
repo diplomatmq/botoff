@@ -33,6 +33,7 @@ async def _settings_out(session: AsyncSession) -> SettingsOut:
         smart_trader_excluded_collections=list(values.get("smart_trader_excluded_collections") or []),
         smart_trader_excluded_models=list(values.get("smart_trader_excluded_models") or []),
         smart_trader_excluded_backdrops=list(values.get("smart_trader_excluded_backdrops") or []),
+        smart_trader_excluded_symbols=list(values.get("smart_trader_excluded_symbols") or []),
         smart_trader_attribute_collection_id=values.get("smart_trader_attribute_collection_id"),
     )
 
@@ -113,6 +114,7 @@ async def update_settings(
         "smart_trader_excluded_collections",
         "smart_trader_excluded_models",
         "smart_trader_excluded_backdrops",
+        "smart_trader_excluded_symbols",
         "smart_trader_attribute_collection_id",
     ):
         if key in payload.model_fields_set:
