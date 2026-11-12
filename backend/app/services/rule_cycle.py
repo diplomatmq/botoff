@@ -15,7 +15,7 @@ from app.models import ApiCredential, AutomationRule, ManagedOffer, OperationQue
 from app.money import ZERO, money_str, to_decimal
 from app.notifications import service as notifications
 from app.portals.client import PortalsGateway
-from app.services import audit, operations_service
+from app.services import audit, collections_service, offers_service, operations_service
 from app.services.engine import AccountView, Decision, MarketView, RuleSnapshot, decide
 from app.services.offers_service import (
     build_market_snapshot,
@@ -49,6 +49,7 @@ def _scope_signature(rule: AutomationRule) -> str:
             rule.collection_id,
             ",".join(sorted(rule.models or [])),
             ",".join(sorted(rule.backdrops or [])),
+            ",".join(sorted(rule.excluded_backdrops or [])),
             ",".join(sorted(rule.symbols or [])),
         ]
     )
@@ -76,7 +77,7 @@ def rule_snapshot(rule: AutomationRule) -> RuleSnapshot:
         on_limit_behavior=rule.on_limit_behavior,
         quantum=settings.price_quantum,
         min_offer_amount=settings.min_offer_amount,
-        uses_attributes=bool(rule.models or rule.backdrops or rule.symbols),
+        uses_attributes=bool(rule.models or rule.backdrops or rule.symbols or rule.excluded_backdrops),
         scope_guard=rule.scope_guard,
     )
 
@@ -194,7 +195,7 @@ async def run_rule_cycle(
     elif decision.action == "pause":
         await _pause_rule(session, rule, decision.reason)
     elif decision.action == "create":
-        enqueued = await _enqueue_create(session, rule, credential, decision, snapshot)
+        enqueued = await _enqueue_create(session, rule, gateway, credential, decision, snapshot)
     elif decision.action == "update" and own_row is not None:
         if decision.target_price is None or not is_price_step_reached(
             own_row.amount, decision.target_price, rule_snapshot(rule).quantum
@@ -324,9 +325,33 @@ async def _pause_rule(session: AsyncSession, rule: AutomationRule, reason: str) 
     )
 
 
+async def _offer_attributes(
+    session: AsyncSession,
+    gateway: PortalsGateway,
+    rule: AutomationRule,
+) -> list[dict[str, str]]:
+    """Build offer attributes, expanding excluded backdrops into an explicit list."""
+    excluded = offers_service.rule_excluded_backdrops(rule)
+    attributes = [
+        item
+        for item in rule_attributes(rule)
+        if not (item["type"] == "backdrop" and item["value"] in excluded)
+    ]
+    if not excluded or rule.backdrops:
+        return attributes
+    for entry in await collections_service.resolve_attribute_entries(
+        session, gateway, rule.collection_id, "backdrop"
+    ):
+        name = str(entry["name"])
+        if name not in excluded:
+            attributes.append({"type": "backdrop", "value": name})
+    return sorted(attributes, key=lambda item: (item["type"], item["value"]))
+
+
 async def _enqueue_create(
     session: AsyncSession,
     rule: AutomationRule,
+    gateway: PortalsGateway,
     credential: ApiCredential,
     decision: Decision,
     snapshot,
@@ -359,7 +384,7 @@ async def _enqueue_create(
         return False
 
     signature = _scope_signature(rule)
-    attributes = rule_attributes(rule)
+    attributes = await _offer_attributes(session, gateway, rule)
     dedupe_key = operations_service.make_dedupe_key(
         "create", rule.id, rule.collection_id, signature, money_str(decision.target_price), rule.max_nfts
     )

@@ -13,6 +13,7 @@ interface RuleForm {
   scope_mode: string;
   models: string;
   backdrops: string;
+  excluded_backdrops: string;
   symbols: string;
   scope_guard: boolean;
   strategy: string;
@@ -39,6 +40,7 @@ const EMPTY_FORM: RuleForm = {
   scope_mode: 'collection',
   models: '',
   backdrops: '',
+  excluded_backdrops: '',
   symbols: '',
   scope_guard: true,
   strategy: 'floor_relative',
@@ -98,6 +100,7 @@ export default function RulesPage() {
   const [collectionSearch, setCollectionSearch] = useState('');
   const [modelSearch, setModelSearch] = useState('');
   const [backdropSearch, setBackdropSearch] = useState('');
+  const [excludedBackdropSearch, setExcludedBackdropSearch] = useState('');
   const [symbolSearch, setSymbolSearch] = useState('');
   const [refreshingCatalog, setRefreshingCatalog] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -112,6 +115,9 @@ export default function RulesPage() {
   );
   const visibleBackdrops = availableBackdrops.filter((item) =>
     item.name.toLowerCase().includes(backdropSearch.trim().toLowerCase()),
+  );
+  const visibleExcludedBackdrops = availableBackdrops.filter((item) =>
+    item.name.toLowerCase().includes(excludedBackdropSearch.trim().toLowerCase()),
   );
   const visibleSymbols = availableSymbols.filter((item) =>
     item.name.toLowerCase().includes(symbolSearch.trim().toLowerCase()),
@@ -209,6 +215,7 @@ export default function RulesPage() {
       scope_mode: rule.scope_mode,
       models: rule.models.join(', '),
       backdrops: rule.backdrops.join(', '),
+      excluded_backdrops: rule.excluded_backdrops.join(', '),
       symbols: rule.symbols.join(', '),
       scope_guard: rule.scope_guard,
       strategy: rule.strategy,
@@ -241,6 +248,7 @@ export default function RulesPage() {
       scope_mode: form.scope_mode,
       models: splitList(form.models),
       backdrops: splitList(form.backdrops),
+      excluded_backdrops: splitList(form.excluded_backdrops),
       symbols: splitList(form.symbols),
       scope_guard: form.scope_guard,
       strategy: form.strategy,
@@ -331,6 +339,12 @@ export default function RulesPage() {
     const current = splitList(form.backdrops);
     const next = current.includes(name) ? current.filter((item) => item !== name) : [...current, name];
     setField('backdrops', next.join(', '));
+  }
+
+  function toggleExcludedBackdrop(name: string) {
+    const current = splitList(form.excluded_backdrops);
+    const next = current.includes(name) ? current.filter((item) => item !== name) : [...current, name];
+    setField('excluded_backdrops', next.join(', '));
   }
 
   function toggleSymbol(name: string) {
@@ -546,6 +560,46 @@ export default function RulesPage() {
                 className="mt-2"
                 value={form.backdrops}
                 onChange={(event) => setField('backdrops', event.target.value)}
+                placeholder="Можно также ввести вручную через запятую"
+              />
+            </div>
+            <div className="md:col-span-2">
+              <span className="mb-1 block text-xs uppercase text-slate-400">Исключённые фоны</span>
+              <p className="mb-2 text-xs text-slate-500">
+                Конкуренты, офферы которых ограничены только этими фонами, не учитываются. Если фоны выше не выбраны, оффер создаётся по всем фонам, кроме исключённых.
+              </p>
+              <Input className="mb-2" placeholder="Поиск фона" value={excludedBackdropSearch} onChange={(event) => setExcludedBackdropSearch(event.target.value)} />
+              {availableBackdrops.length > 0 ? (
+                <div className="max-h-64 space-y-1 overflow-y-auto rounded border border-slate-800 bg-slate-900/50 p-2">
+                  {visibleExcludedBackdrops.map((backdrop) => {
+                    const selected = splitList(form.excluded_backdrops).includes(backdrop.name);
+                    return (
+                      <button
+                        key={backdrop.name}
+                        type="button"
+                        onClick={() => toggleExcludedBackdrop(backdrop.name)}
+                        className={`flex w-full items-center gap-2 rounded border px-2 py-1 text-left text-xs transition-colors ${
+                          selected
+                            ? 'border-red-500 bg-red-600 text-white'
+                            : 'border-slate-700 bg-slate-800 text-slate-300 hover:border-slate-500'
+                        }`}
+                      >
+                        {backdrop.photo_url ? <img src={backdrop.photo_url} alt="" className="h-8 w-8 rounded object-cover" /> : <span className="h-8 w-8 rounded bg-slate-700" />}
+                        <span className="flex-1">{backdrop.name}</span>
+                        {backdrop.floor_price && <span className="opacity-60">Floor: {backdrop.floor_price}</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="rounded border border-slate-800 p-2 text-xs italic text-slate-500">
+                  {form.collection_id ? 'Фоны не загружены или отсутствуют' : 'Выберите коллекцию, чтобы увидеть фоны'}
+                </div>
+              )}
+              <Input
+                className="mt-2"
+                value={form.excluded_backdrops}
+                onChange={(event) => setField('excluded_backdrops', event.target.value)}
                 placeholder="Можно также ввести вручную через запятую"
               />
             </div>

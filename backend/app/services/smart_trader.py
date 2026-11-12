@@ -13,8 +13,7 @@ from app.models import ApiCredential, CollectionCache, ManagedOffer, ModelCache,
 from app.money import ZERO, increase_by_step, to_decimal
 from app.portals.client import PortalsGateway
 from app.portals.errors import PortalsError
-from app.services import operations_service, settings_service
-from app.services.collections_service import extract_attribute_entries
+from app.services import collections_service, operations_service, settings_service
 from app.services.offers_service import (
     offer_entries,
     sender_matches,
@@ -252,16 +251,17 @@ async def run(
             if not attributes and models:
                 continue
         if collection_backdrops_excluded:
-            try:
-                await session.commit()
-                backdrop_payload = await gateway.model_background_floors(collection.id)
-                attributes.extend(
-                    {"type": "backdrop", "value": entry["name"]}
-                    for entry in extract_attribute_entries(backdrop_payload, "backdrop", collection.id)
-                    if entry["name"] not in collection_backdrops_excluded
-                )
-            except PortalsError:
+            await session.commit()
+            backdrops = await collections_service.resolve_attribute_entries(
+                session, gateway, collection.id, "backdrop"
+            )
+            if not backdrops:
                 continue
+            attributes.extend(
+                {"type": "backdrop", "value": entry["name"]}
+                for entry in backdrops
+                if entry["name"] not in collection_backdrops_excluded
+            )
         if attribute_restriction and not attributes:
             continue
         attributes = sorted(attributes, key=lambda item: (item["type"], item["value"]))

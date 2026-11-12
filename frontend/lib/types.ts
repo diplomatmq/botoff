@@ -72,6 +72,7 @@ export interface Rule {
   scope_mode: string;
   models: string[];
   backdrops: string[];
+  excluded_backdrops: string[];
   symbols: string[];
   scope_guard: boolean;
   strategy: string;

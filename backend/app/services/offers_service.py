@@ -73,7 +73,11 @@ def rule_scope_kind(rule: AutomationRule) -> str:
 
 
 def rule_uses_attributes(rule: AutomationRule) -> bool:
-    return bool(rule.models or rule.backdrops or rule.symbols)
+    return bool(rule.models or rule.backdrops or rule.symbols or rule.excluded_backdrops)
+
+
+def rule_excluded_backdrops(rule: AutomationRule) -> set[str]:
+    return {str(value) for value in (rule.excluded_backdrops or [])}
 
 
 def rule_attributes(rule: AutomationRule) -> list[dict[str, str]]:
@@ -118,18 +122,18 @@ def offer_scope_attributes(offer: dict[str, Any]) -> dict[str, set[str]]:
 def offer_matches_rule(offer: dict[str, Any], rule: AutomationRule) -> bool:
     """
     Determines if an offer competes with a rule.
-    
+
     Key logic:
     - If rule has NO attributes selected (all empty), it matches ALL offers (broad scope)
     - If rule has attributes selected, it only matches offers that:
       a) Have NO attributes specified (broad offers match all rules)
       b) Have overlapping attributes with the rule
-    
-    Special case for exclusions:
-    - An offer with specific attributes (e.g., specific backdrops) does NOT compete
-      with a rule that has ALL attributes selected (empty list = all items)
-    - But a rule with specific attributes selected will NOT match broad offers
-      when scope_guard is enabled
+
+    Backdrop nuances:
+    - A rule that keeps every backdrop ("all backdrops") does not compete with an offer
+      narrowed down to specific backdrops: such an offer only fights for that subset.
+    - Backdrops listed in `rule.excluded_backdrops` are ignored on both sides: a competitor
+      targeting only excluded backdrops is not a competitor.
     """
     offer_attributes = offer_scope_attributes(offer)
     offer_models = offer_attributes["model"]
@@ -153,6 +157,16 @@ def offer_matches_rule(offer: dict[str, Any], rule: AutomationRule) -> bool:
     rule_models = set(rule.models or [])
     rule_backdrops = set(rule.backdrops or [])
     rule_symbols = set(rule.symbols or [])
+    excluded_backdrops = rule_excluded_backdrops(rule)
+
+    # Competitors that target only backdrops excluded by the rule are not competitors.
+    if excluded_backdrops and offer_backdrops and offer_backdrops <= excluded_backdrops:
+        return False
+
+    # The rule keeps all backdrops, so an offer narrowed to specific backdrops
+    # competes only for that subset and can be ignored.
+    if not rule_backdrops and offer_backdrops:
+        return False
 
     # Check for attribute overlap
     # If rule specifies models and offer has models, they must overlap

@@ -55,6 +55,7 @@ async def _rule_out(session: AsyncSession, rule: AutomationRule) -> RuleOut:
         scope_mode=rule.scope_mode,
         models=list(rule.models or []),
         backdrops=list(rule.backdrops or []),
+        excluded_backdrops=list(rule.excluded_backdrops or []),
         symbols=list(rule.symbols or []),
         scope_guard=rule.scope_guard,
         strategy=rule.strategy,
@@ -122,6 +123,7 @@ async def _apply_payload(session: AsyncSession, rule: AutomationRule, payload) -
     rule.scope_mode = payload.scope_mode.value if hasattr(payload.scope_mode, "value") else str(payload.scope_mode)
     rule.models = list(payload.models)
     rule.backdrops = list(payload.backdrops)
+    rule.excluded_backdrops = list(payload.excluded_backdrops)
     rule.symbols = list(payload.symbols)
     rule.scope_guard = payload.scope_guard
     rule.strategy = payload.strategy.value if hasattr(payload.strategy, "value") else str(payload.strategy)

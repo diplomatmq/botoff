@@ -186,6 +186,7 @@ class AutomationRule(Base, TimestampMixin):
     scope_mode: Mapped[str] = mapped_column(String(16), default="collection", nullable=False)
     models: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
     backdrops: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    excluded_backdrops: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
     symbols: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
     scope_guard: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 

@@ -267,9 +267,15 @@ class PortalsGateway:
     async def attribute_floors(self) -> dict:
         return await self.client.request("GET", "/collections/attribute-floors")
 
-    async def model_background_floors(self, collection_id: str | None = None) -> dict:
+    async def backdrop_floors(self) -> dict:
+        return await self.client.request("GET", "/collections/backdrops/floors")
+
+    async def model_background_floors(self, models: list[str] | None = None) -> dict:
+        names = [str(model).strip() for model in models or [] if str(model).strip()]
         return await self.client.request(
-            "GET", "/collections/models/backgrounds/floors", params={"collection_id": collection_id}
+            "GET",
+            "/collections/models/backgrounds/floors",
+            params={"models": ",".join(names)} if names else None,
         )
 
     async def top_offer(self, collection_id: str, scope: str | None = None) -> dict | None:

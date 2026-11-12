@@ -25,6 +25,7 @@ def make_rule(**overrides) -> AutomationRule:
         collection_id="col-1",
         models=overrides.pop("models", []),
         backdrops=overrides.pop("backdrops", []),
+        excluded_backdrops=overrides.pop("excluded_backdrops", []),
         symbols=overrides.pop("symbols", []),
     )
     for key, value in overrides.items():
@@ -36,6 +37,7 @@ def test_rule_scope_kind_broad_and_trait():
     assert rule_scope_kind(make_rule()) == "broad"
     assert rule_scope_kind(make_rule(models=["Cat"])) == "trait"
     assert rule_uses_attributes(make_rule(backdrops=["Blue"])) is True
+    assert rule_uses_attributes(make_rule(excluded_backdrops=["Black"])) is True
 
 
 def test_rule_attributes_are_built_from_selections():
@@ -57,7 +59,7 @@ def test_attribute_offer_must_overlap_rule_selection():
     assert offer_matches_rule(other, rule) is False
 
 
-def test_model_rule_considers_competitor_with_specific_backdrop():
+def test_model_rule_ignores_competitor_narrowed_to_backdrop():
     rule = make_rule(models=["Cat"])
     matching = {
         "attributes": [
@@ -71,7 +73,8 @@ def test_model_rule_considers_competitor_with_specific_backdrop():
             {"type": "backdrop", "value": "Black"},
         ]
     }
-    assert offer_matches_rule(matching, rule) is True
+    # The rule keeps every backdrop, so offers narrowed to a specific backdrop are ignored.
+    assert offer_matches_rule(matching, rule) is False
     assert offer_matches_rule(other_model, rule) is False
 
 
@@ -79,6 +82,24 @@ def test_model_rule_ignores_offer_scoped_only_to_backdrop():
     rule = make_rule(models=["Cat"])
     backdrop_only = {"scope": {"backdrops": ["Black"]}}
     assert offer_matches_rule(backdrop_only, rule) is False
+
+
+def test_rule_excluded_backdrops_are_not_competitors():
+    rule = make_rule(models=["Cat"], backdrops=["White"], excluded_backdrops=["Black"])
+    black_only = {
+        "attributes": [
+            {"type": "model", "value": "Cat"},
+            {"type": "backdrop", "value": "Black"},
+        ]
+    }
+    white_only = {
+        "attributes": [
+            {"type": "model", "value": "Cat"},
+            {"type": "backdrop", "value": "White"},
+        ]
+    }
+    assert offer_matches_rule(black_only, rule) is False
+    assert offer_matches_rule(white_only, rule) is True
 
 
 def test_committed_amount_counts_pending_only():

@@ -81,6 +81,7 @@ class RuleBase(BaseModel):
     scope_mode: ScopeMode = ScopeMode.COLLECTION
     models: list[str] = Field(default_factory=list)
     backdrops: list[str] = Field(default_factory=list)
+    excluded_backdrops: list[str] = Field(default_factory=list)
     symbols: list[str] = Field(default_factory=list)
     scope_guard: bool = True
 
@@ -111,7 +112,7 @@ class RuleBase(BaseModel):
             raise ValueError("Срок действия оффера может быть только 1 или 7 дней")
         return value
 
-    @field_validator("models", "backdrops", "symbols")
+    @field_validator("models", "backdrops", "excluded_backdrops", "symbols")
     @classmethod
     def _clean_attributes(cls, value: list[str]) -> list[str]:
         return sorted({item.strip() for item in value if item and item.strip()})
@@ -143,6 +144,7 @@ class RuleOut(BaseModel):
     scope_mode: str
     models: list[str]
     backdrops: list[str]
+    excluded_backdrops: list[str]
     symbols: list[str]
     scope_guard: bool
     strategy: str

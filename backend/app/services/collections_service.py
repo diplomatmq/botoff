@@ -184,6 +184,127 @@ def extract_attribute_entries(payload: Any, attribute_type: str, collection_id: 
     return list(entries.values())
 
 
+_ATTRIBUTE_KEYS = {"model": "models", "backdrop": "backdrops", "symbol": "symbols"}
+
+
+def _attribute_entries(floors: Any) -> list[dict[str, Any]]:
+    """Normalize `{name: price}` and `{name: {floor_price, ...}}` maps into entries."""
+    if not isinstance(floors, dict):
+        return []
+    entries: list[dict[str, Any]] = []
+    for name, value in floors.items():
+        key = str(name).strip()
+        if not key:
+            continue
+        if isinstance(value, dict):
+            price = (
+                value.get("floor_price")
+                or value.get("floor")
+                or value.get("price")
+                or value.get("amount")
+            )
+            photo = _photo_url(value)
+        else:
+            price = value
+            photo = None
+        entries.append({"name": key, "floor_price": price, "photo_url": photo})
+    return entries
+
+
+def collection_attribute_entries(
+    payload: Any, attribute_type: str, collection_names: list[str | None]
+) -> list[dict[str, Any]]:
+    """Read model/backdrop/symbol floors of one collection from an `attribute-floors` payload."""
+    key = _ATTRIBUTE_KEYS.get(attribute_type)
+    floors = payload.get("attribute_floors") if isinstance(payload, dict) else None
+    if key is None or not isinstance(floors, dict):
+        return []
+    for name in collection_names:
+        if not name:
+            continue
+        entry = floors.get(name)
+        if isinstance(entry, dict):
+            entries = _attribute_entries(entry.get(key))
+            if entries:
+                return entries
+    return []
+
+
+def _model_background_entries(payload: Any) -> list[dict[str, Any]]:
+    """Flatten `{"model_backgrounds": {model: {backdrop: price}}}` into backdrop entries."""
+    grouped = payload.get("model_backgrounds") if isinstance(payload, dict) else None
+    if not isinstance(grouped, dict):
+        return []
+    merged: dict[str, dict[str, Any]] = {}
+    for per_model in grouped.values():
+        for entry in _attribute_entries(per_model):
+            current = merged.get(entry["name"])
+            if current is None:
+                merged[entry["name"]] = entry
+                continue
+            price = to_decimal(entry.get("floor_price"))
+            known = to_decimal(current.get("floor_price"))
+            if price is not None and (known is None or price < known):
+                current["floor_price"] = entry["floor_price"]
+    return list(merged.values())
+
+
+async def resolve_attribute_entries(
+    session: AsyncSession,
+    gateway: PortalsGateway,
+    collection_id: str,
+    attribute_type: str,
+) -> list[dict[str, Any]]:
+    """Resolve backdrops/symbols of a collection from live Portals data.
+
+    Backdrops and symbols are not cached locally, so we try several Portals sources
+    in order of accuracy and return the first non-empty result.
+    """
+    collection = await session.get(CollectionCache, collection_id)
+    names = [
+        collection.name if collection is not None else None,
+        collection.short_name if collection is not None else None,
+        collection_id,
+    ]
+
+    attribute_payload: Any = None
+    try:
+        attribute_payload = await gateway.attribute_floors()
+    except PortalsError as exc:
+        logger.warning("attribute floors unavailable for %s: %s", collection_id, exc)
+
+    rows = collection_attribute_entries(attribute_payload, attribute_type, names)
+    if rows:
+        return rows
+
+    if attribute_type == "backdrop":
+        try:
+            rows = _attribute_entries((await gateway.backdrop_floors() or {}).get("floorPrices"))
+        except PortalsError as exc:
+            logger.warning("backdrop floors unavailable for %s: %s", collection_id, exc)
+            rows = []
+        if rows:
+            return rows
+
+        model_names = [row.name for row in await list_models(session, collection_id)]
+        if model_names:
+            try:
+                rows = _model_background_entries(await gateway.model_background_floors(model_names))
+            except PortalsError as exc:
+                logger.warning(
+                    "model background floors unavailable for %s: %s", collection_id, exc
+                )
+                rows = []
+            if rows:
+                return rows
+
+    if attribute_payload is not None:
+        rows = extract_attribute_entries(attribute_payload, attribute_type, collection_id)
+        if rows:
+            return rows
+    return []
+
+
 async def refresh_catalog(session: AsyncSession, gateway: PortalsGateway) -> dict[str, int]:
     preview = await gateway.collections_preview()
     preview_items = (preview or {}).get("collections") or []

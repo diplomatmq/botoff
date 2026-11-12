@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import logging
-
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,9 +9,6 @@ from app.money import money_str
 from app.runtime import build_gateway, get_primary_credential
 from app.schemas import CollectionOut, MessageOut, ModelOut
 from app.services import audit, collections_service
-from app.portals.errors import PortalsError
-
-logger = logging.getLogger("portals.collections.api")
 
 router = APIRouter(prefix="/api/collections", tags=["collections"])
 
@@ -104,6 +99,28 @@ async def list_models(
     ]
 
 
+def attribute_out(rows: list[dict]) -> list[ModelOut]:
+    result: list[ModelOut] = []
+    for row in rows:
+        photo = collections_service._photo_url(row)
+        if not photo and row.get("photos"):
+            photos_data = row.get("photos")
+            if isinstance(photos_data, list) and photos_data:
+                first = photos_data[0]
+                photo = first if isinstance(first, str) else first.get("url") if isinstance(first, dict) else None
+            elif isinstance(photos_data, dict):
+                photo = photos_data.get("url")
+        result.append(
+            ModelOut(
+                name=row["name"],
+                photo_url=photo,
+                floor_price=money_str(row["floor_price"]) if row.get("floor_price") is not None else None,
+                max_offer=None,
+            )
+        )
+    return result
+
+
 @router.get("/{collection_id}/backdrops", response_model=list[ModelOut])
 async def list_backdrops(
     collection_id: str,
@@ -114,36 +131,8 @@ async def list_backdrops(
     if credential is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Сначала подключите API-ключ Portals")
     gateway = build_gateway(credential)
-    try:
-        payload = await gateway.model_background_floors(collection_id)
-        rows = collections_service.extract_attribute_entries(payload, "backdrop", collection_id)
-        if not rows:
-            rows = collections_service.extract_attribute_entries(
-                await gateway.attribute_floors(), "backdrop", collection_id
-            )
-    except PortalsError as exc:
-        logger.warning("backdrop catalog unavailable for %s: %s", collection_id, exc)
-        rows = []
-    
-    # Enrich with photos from raw attribute_floors data
-    result = []
-    for row in rows:
-        photo = collections_service._photo_url(row)
-        # If no photo found, try to get it from the raw data using alternative keys
-        if not photo and row.get("photos"):
-            photos_data = row.get("photos")
-            if isinstance(photos_data, list) and photos_data:
-                photo = photos_data[0] if isinstance(photos_data[0], str) else None
-            elif isinstance(photos_data, dict):
-                photo = photos_data.get("url")
-        
-        result.append(ModelOut(
-            name=row["name"],
-            photo_url=photo,
-            floor_price=money_str(row["floor_price"]) if row.get("floor_price") is not None else None,
-            max_offer=None,
-        ))
-    return result
+    rows = await collections_service.resolve_attribute_entries(session, gateway, collection_id, "backdrop")
+    return attribute_out(rows)
 
 
 @router.get("/{collection_id}/symbols", response_model=list[ModelOut])
@@ -156,34 +145,8 @@ async def list_symbols(
     if credential is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Сначала подключите API-ключ Portals")
     gateway = build_gateway(credential)
-    try:
-        payload = await gateway.model_background_floors(collection_id)
-        rows = collections_service.extract_attribute_entries(payload, "symbol", collection_id)
-        if not rows:
-            rows = collections_service.extract_attribute_entries(
-                await gateway.attribute_floors(), "symbol", collection_id
-            )
-    except PortalsError as exc:
-        logger.warning("symbol catalog unavailable for %s: %s", collection_id, exc)
-        rows = []
-    
-    result = []
-    for row in rows:
-        photo = collections_service._photo_url(row)
-        if not photo and row.get("photos"):
-            photos_data = row.get("photos")
-            if isinstance(photos_data, list) and photos_data:
-                photo = photos_data[0] if isinstance(photos_data[0], str) else None
-            elif isinstance(photos_data, dict):
-                photo = photos_data.get("url")
-        
-        result.append(ModelOut(
-            name=row["name"],
-            photo_url=photo,
-            floor_price=money_str(row["floor_price"]) if row.get("floor_price") is not None else None,
-            max_offer=None,
-        ))
-    return result
+    rows = await collections_service.resolve_attribute_entries(session, gateway, collection_id, "symbol")
+    return attribute_out(rows)
 
 
 @router.post("/{collection_id}/models/refresh", response_model=MessageOut)
