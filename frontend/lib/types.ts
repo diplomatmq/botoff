@@ -194,6 +194,7 @@ export interface Settings {
   smart_trader_enabled: boolean;
   smart_trader_min_spread_percent: string;
   smart_trader_max_rebids_per_offer: number | null;
+  smart_trader_max_active_offers: number | null;
   smart_trader_excluded_collections: string[];
   smart_trader_excluded_models: string[];
   smart_trader_excluded_backdrops: string[];

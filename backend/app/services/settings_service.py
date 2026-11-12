@@ -19,6 +19,7 @@ DEFAULTS: dict[str, Any] = {
     "smart_trader_enabled": False,
     "smart_trader_min_spread_percent": "0",
     "smart_trader_max_rebids_per_offer": None,
+    "smart_trader_max_active_offers": 1,
     "smart_trader_excluded_collections": [],
     "smart_trader_excluded_models": [],
     "smart_trader_excluded_backdrops": [],

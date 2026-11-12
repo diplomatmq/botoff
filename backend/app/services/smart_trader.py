@@ -114,6 +114,12 @@ async def run(
     max_rebids = int(max_rebids) if max_rebids is not None else None
     if max_rebids == 0:
         max_rebids = None
+    max_active_setting = await settings_service.get_setting(
+        session, "smart_trader_max_active_offers", 1
+    )
+    max_active = int(max_active_setting) if max_active_setting not in (None, "") else None
+    if max_active is not None and max_active <= 0:
+        max_active = None
     step = Decimal(str(await settings_service.get_setting(session, "default_min_step", "0.00001")))
     try:
         balance, frozen = await _wallet(gateway)
@@ -177,10 +183,28 @@ async def run(
         row for row in all_local_rows
         if row.status == OfferStatus.PENDING.value
     ]
-    by_collection = {
-        row.collection_id: row for row in local_rows
-        if (row.raw or {}).get("source") == SOURCE
-    }
+    # Only one offer per gift is allowed, so keep the freshest row of each collection.
+    by_collection: dict[str, ManagedOffer] = {}
+    for row in local_rows:
+        if (row.raw or {}).get("source") != SOURCE:
+            continue
+        existing = by_collection.get(row.collection_id)
+        if existing is None or row.updated_at > existing.updated_at:
+            if existing is not None:
+                await _enqueue_cancel(
+                    session,
+                    user_id=user_id,
+                    row=existing,
+                    reason="Оффер отклонён: на один гифт допускается только один оффер",
+                )
+            by_collection[row.collection_id] = row
+        else:
+            await _enqueue_cancel(
+                session,
+                user_id=user_id,
+                row=row,
+                reason="Оффер отклонён: на один гифт допускается только один оффер",
+            )
     pending_create = (
         await session.execute(
             select(OperationQueue).where(
@@ -215,13 +239,11 @@ async def run(
         if operation.state in ("pending", "running", "retry")
         and (operation.payload or {}).get("source") == SOURCE
     ]
-    has_pending_create = bool(pending_create)
-    if len(by_collection) > 1:
-        keep = max(by_collection.values(), key=lambda item: item.updated_at)
-        for row in by_collection.values():
-            if row.id != keep.id:
-                await _enqueue_cancel(session, user_id=user_id, row=row)
-        by_collection = {keep.collection_id: keep}
+    if max_active is not None and len(by_collection) > max_active:
+        ordered_rows = sorted(by_collection.values(), key=lambda item: item.updated_at, reverse=True)
+        for row in ordered_rows[max_active:]:
+            await _enqueue_cancel(session, user_id=user_id, row=row)
+        by_collection = {row.collection_id: row for row in ordered_rows[:max_active]}
 
     candidates: list[tuple[Decimal, CollectionCache, Decimal, list[dict[str, str]]]] = []
     for collection in collections:
@@ -372,7 +394,11 @@ async def run(
 
     candidates.sort(key=lambda item: item[0], reverse=True)
     changed = 0
-    has_active_offer = bool(by_collection) or has_pending_create
+    occupied_collections = set(by_collection)
+    for operation in pending_create:
+        pending_collection_id = str((operation.payload or {}).get("collection_id") or "")
+        if pending_collection_id:
+            occupied_collections.add(pending_collection_id)
     for _, collection, target, attributes in candidates:
         row = by_collection.get(collection.id)
         if row is not None:
@@ -417,7 +443,9 @@ async def run(
 
         if target > available:
             continue
-        if has_active_offer:
+        if collection.id in occupied_collections:
+            continue
+        if max_active is not None and len(occupied_collections) >= max_active:
             continue
         await operations_service.enqueue(
             session,
@@ -432,7 +460,7 @@ async def run(
                      "rebid_count": 0, "credential_id": str(credential.id)},
         )
         available -= target
-        has_active_offer = True
+        occupied_collections.add(collection.id)
         changed += 1
     return changed
 

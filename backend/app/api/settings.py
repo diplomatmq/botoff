@@ -30,6 +30,7 @@ async def _settings_out(session: AsyncSession) -> SettingsOut:
         smart_trader_enabled=bool(values.get("smart_trader_enabled")),
         smart_trader_min_spread_percent=str(values.get("smart_trader_min_spread_percent", "0")),
         smart_trader_max_rebids_per_offer=values.get("smart_trader_max_rebids_per_offer"),
+        smart_trader_max_active_offers=values.get("smart_trader_max_active_offers"),
         smart_trader_excluded_collections=list(values.get("smart_trader_excluded_collections") or []),
         smart_trader_excluded_models=list(values.get("smart_trader_excluded_models") or []),
         smart_trader_excluded_backdrops=list(values.get("smart_trader_excluded_backdrops") or []),
@@ -109,6 +110,10 @@ async def update_settings(
     if "smart_trader_max_rebids_per_offer" in payload.model_fields_set:
         await settings_service.set_setting(
             session, "smart_trader_max_rebids_per_offer", payload.smart_trader_max_rebids_per_offer
+        )
+    if "smart_trader_max_active_offers" in payload.model_fields_set:
+        await settings_service.set_setting(
+            session, "smart_trader_max_active_offers", payload.smart_trader_max_active_offers
         )
     for key in (
         "smart_trader_excluded_collections",
