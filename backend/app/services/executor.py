@@ -97,7 +97,9 @@ async def execute(
         if (
             operation.operation_type == OperationType.CREATE_OFFER.value
             and (operation.payload or {}).get("source") == "smart_trader"
-            and not await settings_service.get_setting(session, "smart_trader_enabled", False)
+            and not await settings_service.get_setting(
+                session, "smart_trader_enabled", False, user_id=operation.user_id
+            )
         ):
             return ExecutionOutcome(
                 ok=True,

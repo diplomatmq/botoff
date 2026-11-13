@@ -3,6 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select
@@ -20,8 +21,10 @@ from app.services.offers_service import (
     account_balance,
     build_market_snapshot,
     default_next_run,
+    row_matches_scope,
     rule_active_offers,
     rule_committed_amount,
+    rule_scopes,
 )
 from app.services.rule_cycle import rule_snapshot
 
@@ -292,8 +295,12 @@ async def change_state(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Укажите состояние правила")
 
     if target == RuleState.ACTIVE.value:
-        automation_enabled = await settings_service.get_setting(session, "automation_enabled", False)
-        mode = await settings_service.get_setting(session, "mode", AutomationMode.DRY_RUN.value)
+        automation_enabled = await settings_service.get_setting(
+            session, "automation_enabled", False, user_id=context.user.id
+        )
+        mode = await settings_service.get_setting(
+            session, "mode", AutomationMode.DRY_RUN.value, user_id=context.user.id
+        )
         if mode != AutomationMode.LIVE.value:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -338,50 +345,74 @@ async def preview_rule(
 
     gateway = build_gateway(credential)
     balance, _ = await account_balance(session, gateway)
-    snapshot = await build_market_snapshot(
-        session, gateway, rule, credential_sender_id=credential.sender_id
-    )
-    own_rows = await rule_active_offers(session, rule.id)
-    own_row = own_rows[0] if own_rows else None
-    committed = rule_committed_amount(own_rows)
+    active_rows = await rule_active_offers(session, rule.id)
+    committed = rule_committed_amount(active_rows)
 
-    market = MarketView(
-        floor_price=snapshot.floor_price,
-        own_amount=own_row.amount if own_row is not None else None,
-        own_rank=snapshot.own_rank,
-        competitor_amount=snapshot.competitor_amount,
-        competitor_unknown=snapshot.competitor_unknown,
-        total_offers=snapshot.total_count,
-        data_stale=False,
-    )
-    account = AccountView(
-        available=balance,
-        reserved=ZERO,
-        rule_committed=committed,
-        active_offers_for_rule=len(own_rows),
-        mode_live=False,
-        automation_enabled=True,
-        emergency_stop=False,
-        attribute_offers_unavailable=snapshot.attribute_offers_unavailable,
-    )
+    scope_previews: list[DryRunPreview] = []
+    scope_details: list[dict[str, Any]] = []
+    for scope in rule_scopes(rule):
+        snapshot = await build_market_snapshot(
+            session, gateway, rule, credential_sender_id=credential.sender_id, scope=scope
+        )
+        own_rows = [row for row in active_rows if row_matches_scope(row, scope)]
+        own_row = own_rows[0] if own_rows else None
 
-    decision = decide(rule_snapshot(rule), market, account)
-    return DryRunPreview(
-        rule_id=str(rule.id),
-        action=decision.action,
-        status=decision.position_status,
-        reason=decision.reason,
-        target_price=money_str(decision.target_price) if decision.target_price is not None else None,
-        cap=money_str(decision.cap) if decision.cap is not None else None,
-        floor_price=money_str(snapshot.floor_price) if snapshot.floor_price is not None else None,
-        competitor_amount=money_str(snapshot.competitor_amount) if snapshot.competitor_amount is not None else None,
-        own_amount=money_str(own_row.amount) if own_row is not None and own_row.amount is not None else None,
-        own_rank=snapshot.own_rank + 1 if snapshot.own_rank is not None else None,
-        total_offers=snapshot.total_count,
-        detail={
-            "error": snapshot.error,
-            "rate_limited": snapshot.rate_limited,
-            "scope_kind": snapshot.scope_kind,
-            "available": money_str(balance) if balance is not None else None,
-        },
-    )
+        market = MarketView(
+            floor_price=snapshot.floor_price,
+            own_amount=own_row.amount if own_row is not None else None,
+            own_rank=snapshot.own_rank,
+            competitor_amount=snapshot.competitor_amount,
+            competitor_unknown=snapshot.competitor_unknown,
+            total_offers=snapshot.total_count,
+            data_stale=False,
+        )
+        account = AccountView(
+            available=balance,
+            reserved=ZERO,
+            rule_committed=committed,
+            active_offers_for_rule=len(own_rows),
+            mode_live=False,
+            automation_enabled=True,
+            emergency_stop=False,
+            attribute_offers_unavailable=snapshot.attribute_offers_unavailable,
+        )
+
+        decision = decide(rule_snapshot(rule), market, account)
+        scope_previews.append(
+            DryRunPreview(
+                rule_id=str(rule.id),
+                action=decision.action,
+                status=decision.position_status,
+                reason=decision.reason,
+                target_price=money_str(decision.target_price) if decision.target_price is not None else None,
+                cap=money_str(decision.cap) if decision.cap is not None else None,
+                floor_price=money_str(snapshot.floor_price) if snapshot.floor_price is not None else None,
+                competitor_amount=money_str(snapshot.competitor_amount) if snapshot.competitor_amount is not None else None,
+                own_amount=money_str(own_row.amount) if own_row is not None and own_row.amount is not None else None,
+                own_rank=snapshot.own_rank + 1 if snapshot.own_rank is not None else None,
+                total_offers=snapshot.total_count,
+                detail={
+                    "error": snapshot.error,
+                    "rate_limited": snapshot.rate_limited,
+                    "scope_kind": snapshot.scope_kind,
+                    "available": money_str(balance) if balance is not None else None,
+                    "model": scope.label,
+                },
+            )
+        )
+        scope_details.append(
+            {
+                "model": scope.label,
+                "action": decision.action,
+                "status": decision.position_status,
+                "reason": decision.reason,
+                "target_price": money_str(decision.target_price) if decision.target_price is not None else None,
+                "cap": money_str(decision.cap) if decision.cap is not None else None,
+                "floor_price": money_str(snapshot.floor_price) if snapshot.floor_price is not None else None,
+            }
+        )
+
+    primary = next((item for item in scope_previews if item.action != "noop"), scope_previews[0])
+    primary.detail["scopes"] = scope_details
+    primary.detail["scope_count"] = len(scope_previews)
+    return primary

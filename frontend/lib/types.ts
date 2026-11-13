@@ -101,6 +101,16 @@ export interface Rule {
   updated_at: string;
 }
 
+export interface PreviewScope {
+  model: string;
+  action: string;
+  status: string;
+  reason: string;
+  target_price: string | null;
+  cap: string | null;
+  floor_price: string | null;
+}
+
 export interface DryRunPreview {
   rule_id: string | null;
   action: string;
@@ -195,6 +205,7 @@ export interface Settings {
   smart_trader_min_spread_percent: string;
   smart_trader_max_rebids_per_offer: number | null;
   smart_trader_max_active_offers: number | null;
+  smart_trader_max_purchases_per_collection: number | null;
   smart_trader_excluded_collections: string[];
   smart_trader_excluded_models: string[];
   smart_trader_excluded_backdrops: string[];

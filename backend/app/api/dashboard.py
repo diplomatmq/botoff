@@ -56,7 +56,7 @@ async def dashboard(
     session: AsyncSession = Depends(get_db),
 ) -> DashboardSummary:
     user_id = context.user.id
-    values = await settings_service.all_settings(session)
+    values = await settings_service.all_settings(session, user_id=user_id)
     throughput = values.get("throughput") or {}
 
     credential = (

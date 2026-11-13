@@ -8,6 +8,10 @@ from app.models import AutomationRule, ManagedOffer
 from app.services.offers_service import (
     offer_entries,
     offer_matches_rule,
+    offer_matches_scope,
+    row_matches_scope,
+    rule_scopes,
+    scope_signature,
     sender_matches,
     rule_attributes,
     rule_committed_amount,
@@ -120,6 +124,45 @@ def test_committed_amount_counts_pending_only():
         scope={},
     )
     assert rule_committed_amount([pending, canceled]) == Decimal("6")
+
+
+def test_rule_with_several_models_splits_into_one_scope_per_model():
+    scopes = rule_scopes(make_rule(models=["Cat", "Dog"], backdrops=["Blue"]))
+    assert [scope.models for scope in scopes] == [("Cat",), ("Dog",)]
+    assert all(scope.backdrops == ("Blue",) for scope in scopes)
+    assert [scope.label for scope in scopes] == ["Cat", "Dog"]
+
+
+def test_rule_without_models_keeps_a_single_scope():
+    scopes = rule_scopes(make_rule(backdrops=["Blue"]))
+    assert len(scopes) == 1
+    assert scopes[0].label == "вся коллекция"
+
+
+def test_scope_signature_differs_per_model():
+    cat, dog = rule_scopes(make_rule(models=["Cat", "Dog"]))
+    assert scope_signature(cat) != scope_signature(dog)
+
+
+def test_row_matches_only_its_own_model_scope():
+    row = ManagedOffer(
+        collection_id="c",
+        external_offer_id="1",
+        status=OfferStatus.PENDING.value,
+        scope={"models": ["Cat"], "backdrops": [], "symbols": []},
+    )
+    cat, dog = rule_scopes(make_rule(models=["Cat", "Dog"]))
+    assert row_matches_scope(row, cat) is True
+    assert row_matches_scope(row, dog) is False
+
+
+def test_competitors_are_filtered_by_the_scope_model():
+    cat, dog = rule_scopes(make_rule(models=["Cat", "Dog"]))
+    cat_offer = {"scope": {"models": ["Cat"]}}
+    dog_offer = {"scope": {"models": ["Dog"]}}
+    assert offer_matches_scope(cat_offer, cat) is True
+    assert offer_matches_scope(cat_offer, dog) is False
+    assert offer_matches_scope(dog_offer, dog) is True
 
 
 def test_snapshot_is_stale_by_ttl():

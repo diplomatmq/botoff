@@ -446,3 +446,19 @@ class ApplicationSetting(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
+
+
+class UserSetting(Base, TimestampMixin):
+    """Per-user override of an application setting.
+
+    Falls back to ``application_settings`` and then to ``DEFAULTS`` when absent,
+    so each account keeps its own automation and trader configuration.
+    """
+
+    __tablename__ = "user_settings"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)

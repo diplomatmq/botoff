@@ -21,13 +21,15 @@ POLL_SECONDS = 3.0
 HEARTBEAT_SECONDS = 15.0
 
 
-async def _snapshot() -> dict:
+async def _snapshot(user_id) -> dict:
     async with SessionLocal() as session:
-        values = await settings_service.all_settings(session)
+        values = await settings_service.all_settings(session, user_id=user_id)
         rules = dict(
             (
                 await session.execute(
-                    select(AutomationRule.state, func.count()).group_by(AutomationRule.state)
+                    select(AutomationRule.state, func.count())
+                    .where(AutomationRule.user_id == user_id)
+                    .group_by(AutomationRule.state)
                 )
             ).all()
         )
@@ -35,14 +37,20 @@ async def _snapshot() -> dict:
             (
                 await session.execute(
                     select(ManagedOffer.position_status, func.count())
-                    .where(ManagedOffer.status == OfferStatus.PENDING.value)
+                    .where(
+                        ManagedOffer.status == OfferStatus.PENDING.value,
+                        ManagedOffer.user_id == user_id,
+                    )
                     .group_by(ManagedOffer.position_status)
                 )
             ).all()
         )
         latest = (
             await session.execute(
-                select(AuditLog).order_by(AuditLog.created_at.desc()).limit(5)
+                select(AuditLog)
+                .where(AuditLog.user_id == user_id)
+                .order_by(AuditLog.created_at.desc())
+                .limit(5)
             )
         ).scalars().all()
         return {
@@ -71,7 +79,7 @@ def _format(name: str, payload: dict) -> str:
     return f"event: {name}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
-async def _stream(request: Request) -> AsyncGenerator[str, None]:
+async def _stream(request: Request, user_id) -> AsyncGenerator[str, None]:
     last_beat = 0.0
     last_snapshot: str | None = None
     loop = asyncio.get_running_loop()
@@ -79,7 +87,7 @@ async def _stream(request: Request) -> AsyncGenerator[str, None]:
         if await request.is_disconnected():
             break
         try:
-            payload = await _snapshot()
+            payload = await _snapshot(user_id)
             snapshot = json.dumps(payload, ensure_ascii=False, sort_keys=True)
             if snapshot != last_snapshot:
                 yield _format("update", payload)
@@ -97,7 +105,7 @@ async def _stream(request: Request) -> AsyncGenerator[str, None]:
 @router.get("/stream")
 async def stream(request: Request, context: AuthContext = Depends(current_auth)) -> StreamingResponse:
     return StreamingResponse(
-        _stream(request),
+        _stream(request, context.user.id),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache, no-transform",

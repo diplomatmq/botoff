@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -17,8 +18,8 @@ from app.services import audit, operations_service, settings_service
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
 
-async def _settings_out(session: AsyncSession) -> SettingsOut:
-    values = await settings_service.all_settings(session)
+async def _settings_out(session: AsyncSession, user_id: uuid.UUID) -> SettingsOut:
+    values = await settings_service.all_settings(session, user_id=user_id)
     return SettingsOut(
         automation_enabled=bool(values.get("automation_enabled")),
         emergency_stop=bool(values.get("emergency_stop")),
@@ -31,6 +32,9 @@ async def _settings_out(session: AsyncSession) -> SettingsOut:
         smart_trader_min_spread_percent=str(values.get("smart_trader_min_spread_percent", "0")),
         smart_trader_max_rebids_per_offer=values.get("smart_trader_max_rebids_per_offer"),
         smart_trader_max_active_offers=values.get("smart_trader_max_active_offers"),
+        smart_trader_max_purchases_per_collection=values.get(
+            "smart_trader_max_purchases_per_collection"
+        ),
         smart_trader_excluded_collections=list(values.get("smart_trader_excluded_collections") or []),
         smart_trader_excluded_models=list(values.get("smart_trader_excluded_models") or []),
         smart_trader_excluded_backdrops=list(values.get("smart_trader_excluded_backdrops") or []),
@@ -44,7 +48,7 @@ async def get_settings_view(
     context: AuthContext = Depends(require_csrf),
     session: AsyncSession = Depends(get_db),
 ) -> SettingsOut:
-    return await _settings_out(session)
+    return await _settings_out(session, context.user.id)
 
 
 @router.put("", response_model=SettingsOut)
@@ -53,7 +57,8 @@ async def update_settings(
     context: AuthContext = Depends(require_csrf),
     session: AsyncSession = Depends(get_db),
 ) -> SettingsOut:
-    current = await settings_service.all_settings(session)
+    user_id = context.user.id
+    current = await settings_service.all_settings(session, user_id=user_id)
     emergency = bool(current.get("emergency_stop"))
 
     if payload.mode is not None:
@@ -67,13 +72,13 @@ async def update_settings(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Сначала снимите аварийную остановку",
             )
-        await settings_service.set_setting(session, "mode", payload.mode.value)
+        await settings_service.set_setting(session, "mode", payload.mode.value, user_id=user_id)
         await audit.record(
             session,
             action=AuditAction.MODE_CHANGED.value,
             message=f"Режим изменён на {payload.mode.value}",
             actor=context.user.username,
-            user_id=context.user.id,
+            user_id=user_id,
             level="warning" if payload.mode == AutomationMode.LIVE else "info",
         )
 
@@ -83,16 +88,23 @@ async def update_settings(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Сначала снимите аварийную остановку",
             )
-        await settings_service.set_setting(session, "automation_enabled", payload.automation_enabled)
+        await settings_service.set_setting(
+            session, "automation_enabled", payload.automation_enabled, user_id=user_id
+        )
 
     if payload.default_min_step is not None:
-        await settings_service.set_setting(session, "default_min_step", money_str(payload.default_min_step))
+        await settings_service.set_setting(
+            session, "default_min_step", money_str(payload.default_min_step), user_id=user_id
+        )
     if payload.smart_trader_enabled is not None:
-        await settings_service.set_setting(session, "smart_trader_enabled", payload.smart_trader_enabled)
+        await settings_service.set_setting(
+            session, "smart_trader_enabled", payload.smart_trader_enabled, user_id=user_id
+        )
         if not payload.smart_trader_enabled:
             pending_trader_operations = (
                 await session.execute(
                     select(OperationQueue).where(
+                        OperationQueue.user_id == user_id,
                         OperationQueue.operation_type == OperationType.CREATE_OFFER.value,
                         OperationQueue.state.in_(("pending", "retry")),
                     )
@@ -105,16 +117,18 @@ async def update_settings(
                     operation.last_error = "Smart Trader отключён пользователем"
     if payload.smart_trader_min_spread_percent is not None:
         await settings_service.set_setting(
-            session, "smart_trader_min_spread_percent", str(payload.smart_trader_min_spread_percent)
+            session,
+            "smart_trader_min_spread_percent",
+            str(payload.smart_trader_min_spread_percent),
+            user_id=user_id,
         )
-    if "smart_trader_max_rebids_per_offer" in payload.model_fields_set:
-        await settings_service.set_setting(
-            session, "smart_trader_max_rebids_per_offer", payload.smart_trader_max_rebids_per_offer
-        )
-    if "smart_trader_max_active_offers" in payload.model_fields_set:
-        await settings_service.set_setting(
-            session, "smart_trader_max_active_offers", payload.smart_trader_max_active_offers
-        )
+    for key in (
+        "smart_trader_max_rebids_per_offer",
+        "smart_trader_max_active_offers",
+        "smart_trader_max_purchases_per_collection",
+    ):
+        if key in payload.model_fields_set:
+            await settings_service.set_setting(session, key, getattr(payload, key), user_id=user_id)
     for key in (
         "smart_trader_excluded_collections",
         "smart_trader_excluded_models",
@@ -123,20 +137,20 @@ async def update_settings(
         "smart_trader_attribute_collection_id",
     ):
         if key in payload.model_fields_set:
-            await settings_service.set_setting(session, key, getattr(payload, key))
+            await settings_service.set_setting(session, key, getattr(payload, key), user_id=user_id)
 
     await audit.record(
         session,
         action=AuditAction.SETTINGS_UPDATED.value,
         message="Настройки автоматизации обновлены",
         actor=context.user.username,
-        user_id=context.user.id,
+        user_id=user_id,
         details={
             "automation_enabled": payload.automation_enabled,
             "default_min_step": money_str(payload.default_min_step) if payload.default_min_step is not None else None,
         },
     )
-    return await _settings_out(session)
+    return await _settings_out(session, user_id)
 
 
 @router.post("/emergency-stop", response_model=SettingsOut)
@@ -145,17 +159,23 @@ async def emergency_stop(
     context: AuthContext = Depends(require_csrf),
     session: AsyncSession = Depends(get_db),
 ) -> SettingsOut:
-    await settings_service.set_setting(session, "emergency_stop", payload.enabled)
-    await settings_service.set_setting(session, "emergency_stop_reason", payload.reason if payload.enabled else None)
+    user_id = context.user.id
+    await settings_service.set_setting(session, "emergency_stop", payload.enabled, user_id=user_id)
+    await settings_service.set_setting(
+        session,
+        "emergency_stop_reason",
+        payload.reason if payload.enabled else None,
+        user_id=user_id,
+    )
     if payload.enabled:
-        await settings_service.set_setting(session, "automation_enabled", False)
+        await settings_service.set_setting(session, "automation_enabled", False, user_id=user_id)
 
     cancelled = 0
     if payload.enabled and payload.cancel_offers:
         rows = (
             await session.execute(
                 select(ManagedOffer).where(
-                    ManagedOffer.user_id == context.user.id,
+                    ManagedOffer.user_id == user_id,
                     ManagedOffer.status == OfferStatus.PENDING.value,
                 )
             )
@@ -165,7 +185,7 @@ async def emergency_stop(
                 session,
                 dedupe_key=operations_service.make_dedupe_key("cancel", row.id, "emergency"),
                 operation_type=OperationType.CANCEL_OFFER.value,
-                user_id=context.user.id,
+                user_id=user_id,
                 rule_id=row.rule_id,
                 offer_id=row.id,
                 payload={
@@ -189,17 +209,17 @@ async def emergency_stop(
         action=action,
         message=message,
         actor=context.user.username,
-        user_id=context.user.id,
+        user_id=user_id,
         level="error" if payload.enabled else "warning",
         details={"reason": payload.reason, "cancel_offers": payload.cancel_offers},
     )
     await notifications.notify(
         session,
-        user_id=context.user.id,
+        user_id=user_id,
         event="emergency_stop",
         title="Аварийная остановка",
         message=message,
         level="error",
         force=True,
     )
-    return await _settings_out(session)
+    return await _settings_out(session, user_id)

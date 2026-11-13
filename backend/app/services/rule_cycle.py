@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-import hashlib
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
@@ -18,12 +17,15 @@ from app.portals.client import PortalsGateway
 from app.services import audit, collections_service, offers_service, operations_service
 from app.services.engine import AccountView, Decision, MarketView, RuleSnapshot, decide
 from app.services.offers_service import (
+    RuleScope,
     build_market_snapshot,
     default_next_run,
+    row_matches_scope,
     rule_active_offers,
-    rule_attributes,
     rule_committed_amount,
-    rule_scope_kind,
+    rule_scopes,
+    scope_kind,
+    scope_signature,
     sync_offer_row,
 )
 from app.services.pricing import is_price_step_reached
@@ -43,17 +45,33 @@ class CycleResult:
     detail: dict[str, Any]
 
 
-def _scope_signature(rule: AutomationRule) -> str:
-    payload = "|".join(
-        [
-            rule.collection_id,
-            ",".join(sorted(rule.models or [])),
-            ",".join(sorted(rule.backdrops or [])),
-            ",".join(sorted(rule.excluded_backdrops or [])),
-            ",".join(sorted(rule.symbols or [])),
-        ]
-    )
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]
+@dataclass(slots=True)
+class ScopeOutcome:
+    scope: RuleScope
+    action: str
+    status: str
+    reason: str
+    target_price: Decimal | None
+    cap: Decimal | None
+    enqueued: bool
+    executed: bool
+    detail: dict[str, Any]
+    error: str | None = None
+    fatal: bool = False
+
+
+_STATUS_PRIORITY = (
+    PositionStatus.API_ERROR.value,
+    PositionStatus.RATE_LIMITED.value,
+    PositionStatus.ATTRIBUTE_OFFERS_UNAVAILABLE.value,
+    PositionStatus.INSUFFICIENT_FUNDS.value,
+    PositionStatus.STALE_DATA.value,
+    PositionStatus.OUTBID.value,
+    PositionStatus.LIMIT_REACHED.value,
+    PositionStatus.FIRST_CONFIRMED.value,
+    PositionStatus.DATA_INCOMPLETE.value,
+    PositionStatus.UNKNOWN.value,
+)
 
 
 def rule_snapshot(rule: AutomationRule) -> RuleSnapshot:
@@ -93,14 +111,59 @@ async def run_rule_cycle(
     emergency_stop: bool,
     available_balance: Decimal | None,
 ) -> CycleResult:
+    """Run one rule cycle.
+
+    A rule with several selected models is split into one offer per model: every
+    model is checked and re-bid on its own using its own floor.
+    """
+    scopes = rule_scopes(rule)
+    outcomes: list[ScopeOutcome] = []
+    for scope in scopes:
+        outcome = await _run_scope_cycle(
+            session,
+            rule=rule,
+            gateway=gateway,
+            credential=credential,
+            scope=scope,
+            mode_live=mode_live,
+            automation_enabled=automation_enabled,
+            emergency_stop=emergency_stop,
+            available_balance=available_balance,
+        )
+        outcomes.append(outcome)
+        if outcome.fatal:
+            break
+
+    if mode_live:
+        await _cancel_stale_offers(session, rule, scopes)
+
+    return _aggregate(rule, outcomes)
+
+
+async def _run_scope_cycle(
+    session: AsyncSession,
+    *,
+    rule: AutomationRule,
+    gateway: PortalsGateway,
+    credential: ApiCredential,
+    scope: RuleScope,
+    mode_live: bool,
+    automation_enabled: bool,
+    emergency_stop: bool,
+    available_balance: Decimal | None,
+) -> ScopeOutcome:
     snapshot = await build_market_snapshot(
-        session, gateway, rule, credential_sender_id=credential.sender_id
+        session, gateway, rule, credential_sender_id=credential.sender_id, scope=scope
     )
 
     if snapshot.own_offer is not None:
-        await _adopt_remote_offer(session, rule, credential, snapshot.own_offer, snapshot.own_rank)
+        await _adopt_remote_offer(
+            session, rule, credential, snapshot.own_offer, snapshot.own_rank, scope
+        )
 
-    own_rows = await rule_active_offers(session, rule.id)
+    own_rows = [
+        row for row in await rule_active_offers(session, rule.id) if row_matches_scope(row, scope)
+    ]
     own_row = _pick_own_row(own_rows, snapshot.own_offer)
 
     if snapshot.own_offer is not None and own_row is not None:
@@ -113,9 +176,6 @@ async def run_rule_cycle(
         )
 
     if snapshot.rate_limited:
-        rule.last_position_status = PositionStatus.RATE_LIMITED.value
-        rule.last_decision = {"status": PositionStatus.RATE_LIMITED.value, "reason": "RATE_LIMITED"}
-        rule.next_run_at = default_next_run(rule, offset_seconds=5)
         await audit.record(
             session,
             action="rate_limited",
@@ -125,15 +185,23 @@ async def run_rule_cycle(
             entity_type="rule",
             entity_id=rule.id,
             level="warning",
-            details={"rule": rule.name},
+            details={"rule": rule.name, "model": scope.label},
         )
-        return CycleResult(str(rule.id), "noop", PositionStatus.RATE_LIMITED.value, "RATE_LIMITED", None, False, False, {})
+        return ScopeOutcome(
+            scope,
+            "noop",
+            PositionStatus.RATE_LIMITED.value,
+            "RATE_LIMITED",
+            None,
+            None,
+            False,
+            False,
+            {"scope": scope.label, "status": PositionStatus.RATE_LIMITED.value, "reason": "RATE_LIMITED"},
+            error="Лимит запросов Portals",
+            fatal=True,
+        )
 
     if snapshot.error:
-        rule.last_position_status = PositionStatus.API_ERROR.value
-        rule.last_error = snapshot.error[:500]
-        rule.last_decision = {"status": PositionStatus.API_ERROR.value, "reason": snapshot.error}
-        rule.next_run_at = default_next_run(rule)
         await notifications.notify(
             session,
             user_id=rule.user_id,
@@ -142,14 +210,26 @@ async def run_rule_cycle(
             message=f"Правило «{rule.name}»: {snapshot.error}",
             level="error",
         )
-        return CycleResult(str(rule.id), "noop", PositionStatus.API_ERROR.value, snapshot.error, None, False, False, {})
+        return ScopeOutcome(
+            scope,
+            "noop",
+            PositionStatus.API_ERROR.value,
+            snapshot.error,
+            None,
+            None,
+            False,
+            False,
+            {"scope": scope.label, "status": PositionStatus.API_ERROR.value, "reason": snapshot.error},
+            error=snapshot.error,
+            fatal=True,
+        )
 
-    committed = rule_committed_amount(own_rows)
+    committed = rule_committed_amount(await rule_active_offers(session, rule.id))
     account = AccountView(
         available=available_balance,
         reserved=ZERO,
         rule_committed=committed,
-        active_offers_for_rule=len([row for row in own_rows if row.status == OfferStatus.PENDING.value]),
+        active_offers_for_rule=len(own_rows),
         mode_live=mode_live,
         automation_enabled=automation_enabled,
         emergency_stop=emergency_stop,
@@ -166,36 +246,29 @@ async def run_rule_cycle(
     )
 
     decision = decide(rule_snapshot(rule), market, account)
-    rule.last_decision = {
-        "action": decision.action,
-        "status": decision.position_status,
-        "reason": decision.reason,
-        "target_price": money_str(decision.target_price) if decision.target_price is not None else None,
-        "cap": money_str(decision.cap) if decision.cap is not None else None,
-        "details": decision.details,
-        "calculated_at": datetime.now(UTC).isoformat(),
-    }
-    rule.last_position_status = decision.position_status
-    rule.next_run_at = default_next_run(rule)
-
-    if decision.position_status != PositionStatus.API_ERROR.value:
-        rule.last_error = None
 
     enqueued = False
     executed = False
+    error: str | None = None
+    fatal = False
 
     if not mode_live:
-        executed = await _log_dry_run(session, rule, decision, snapshot)
+        executed = await _log_dry_run(session, rule, decision, snapshot, scope)
     elif decision.action == "noop":
-        # Если в LIVE режиме ничего не делаем, запишем причину, если она важна
         if decision.reason in ("BALANCE_UNKNOWN", "INSUFFICIENT_FUNDS", "FIXED_PRICE_ABOVE_CAP"):
-            rule.last_error = f"Пропуск: {decision.reason}"
-        else:
-            rule.last_error = None
+            error = f"Пропуск: {decision.reason}"
     elif decision.action == "pause":
-        await _pause_rule(session, rule, decision.reason)
+        if decision.reason == "ATTRIBUTE_OFFERS_UNAVAILABLE":
+            await _pause_rule(session, rule, decision.reason)
+            error = decision.reason
+            fatal = True
+        else:
+            # One model reaching its own limit must not stop the other models.
+            error = f"Пропуск: {decision.reason}"
     elif decision.action == "create":
-        enqueued = await _enqueue_create(session, rule, gateway, credential, decision, snapshot)
+        enqueued = await _enqueue_create(
+            session, rule, gateway, credential, decision, snapshot, scope, own_rows
+        )
     elif decision.action == "update" and own_row is not None:
         if decision.target_price is None or not is_price_step_reached(
             own_row.amount, decision.target_price, rule_snapshot(rule).quantum
@@ -204,18 +277,79 @@ async def run_rule_cycle(
     elif decision.action == "cancel" and own_row is not None:
         enqueued = await _enqueue_cancel(session, rule, own_row, snapshot.scope_kind)
 
-    await _emit_status_notifications(session, rule, decision, snapshot.floor_price)
+    await _emit_status_notifications(session, rule, decision, snapshot.floor_price, scope)
+
+    detail = {
+        "scope": list(scope.models) or None,
+        "scope_label": scope.label,
+        "action": decision.action,
+        "status": decision.position_status,
+        "reason": decision.reason,
+        "target_price": money_str(decision.target_price) if decision.target_price is not None else None,
+        "cap": money_str(decision.cap) if decision.cap is not None else None,
+        "floor_price": money_str(snapshot.floor_price) if snapshot.floor_price is not None else None,
+        "details": decision.details,
+    }
+    return ScopeOutcome(
+        scope,
+        decision.action,
+        decision.position_status,
+        decision.reason,
+        decision.target_price,
+        decision.cap,
+        enqueued,
+        executed,
+        detail,
+        error=error,
+        fatal=fatal,
+    )
+
+
+def _aggregate(rule: AutomationRule, outcomes: list[ScopeOutcome]) -> CycleResult:
+    statuses = [outcome.status for outcome in outcomes]
+    status = next((value for value in _STATUS_PRIORITY if value in statuses), None)
+    if status is None:
+        status = statuses[0] if statuses else PositionStatus.UNKNOWN.value
+
+    primary = outcomes[0] if outcomes else None
+    error = next((outcome.error for outcome in outcomes if outcome.error), None)
+    detail = {
+        "action": primary.action if primary else "noop",
+        "status": status,
+        "reason": primary.reason if primary else "NOOP",
+        "target_price": money_str(primary.target_price) if primary and primary.target_price is not None else None,
+        "cap": money_str(primary.cap) if primary and primary.cap is not None else None,
+        "calculated_at": datetime.now(UTC).isoformat(),
+        "scopes": [outcome.detail for outcome in outcomes],
+    }
+    rule.last_position_status = status
+    rule.last_decision = detail
+    rule.next_run_at = default_next_run(rule)
+    if status != PositionStatus.API_ERROR.value:
+        rule.last_error = error
+    else:
+        rule.last_error = error or rule.last_error
 
     return CycleResult(
         rule_id=str(rule.id),
-        action=decision.action,
-        status=decision.position_status,
-        reason=decision.reason,
-        target_price=decision.target_price,
-        enqueued=enqueued,
-        executed=executed,
-        detail=rule.last_decision or {},
+        action=detail["action"],
+        status=status,
+        reason=detail["reason"],
+        target_price=primary.target_price if primary else None,
+        enqueued=any(outcome.enqueued for outcome in outcomes),
+        executed=any(outcome.executed for outcome in outcomes),
+        detail=detail,
     )
+
+
+async def _cancel_stale_offers(
+    session: AsyncSession, rule: AutomationRule, scopes: list[RuleScope]
+) -> None:
+    """Cancel rule-managed offers that no longer belong to any current model scope."""
+    for row in await rule_active_offers(session, rule.id):
+        if any(row_matches_scope(row, scope) for scope in scopes):
+            continue
+        await _enqueue_cancel(session, rule, row, row.scope_kind)
 
 
 def _pick_own_row(own_rows: list[ManagedOffer], own_offer: dict[str, Any] | None) -> ManagedOffer | None:
@@ -235,6 +369,7 @@ async def _adopt_remote_offer(
     credential: ApiCredential,
     offer: dict[str, Any],
     rank: int | None,
+    scope: RuleScope,
 ) -> ManagedOffer | None:
     external_id = str(offer.get("id") or "")
     if not external_id:
@@ -249,15 +384,25 @@ async def _adopt_remote_offer(
         return None
 
     if row is None:
-        scope = offer.get("scope") or {}
+        remote_scope = offer.get("scope") or {}
+        if not (
+            remote_scope.get("models")
+            or remote_scope.get("backdrops")
+            or remote_scope.get("symbols")
+        ):
+            remote_scope = {
+                "models": list(scope.models),
+                "backdrops": list(scope.backdrops),
+                "symbols": list(scope.symbols),
+            }
         row = ManagedOffer(
             user_id=rule.user_id,
             rule_id=rule.id,
             credential_id=credential.id,
             external_offer_id=external_id,
             collection_id=rule.collection_id,
-            scope=scope,
-            scope_kind=rule_scope_kind(rule),
+            scope=remote_scope,
+            scope_kind=scope_kind(scope),
             amount=to_decimal(offer.get("amount")) or ZERO,
             max_nfts=int(offer.get("max_nfts") or rule.max_nfts or 1),
             current_nfts=int(offer.get("current_nfts") or 0),
@@ -277,8 +422,9 @@ async def _log_dry_run(
     rule: AutomationRule,
     decision: Decision,
     snapshot,
+    scope: RuleScope,
 ) -> bool:
-    message = f"DRY_RUN: {decision.action} — {decision.reason}"
+    message = f"DRY_RUN[{scope.label}]: {decision.action} — {decision.reason}"
     if decision.target_price is not None:
         message += f", целевая цена {money_str(decision.target_price)} GRAM"
     await audit.record(
@@ -291,6 +437,7 @@ async def _log_dry_run(
         entity_id=rule.id,
         details={
             "rule": rule.name,
+            "model": scope.label,
             "status": decision.position_status,
             "action": decision.action,
             "target_price": money_str(decision.target_price) if decision.target_price else None,
@@ -329,23 +476,47 @@ async def _offer_attributes(
     session: AsyncSession,
     gateway: PortalsGateway,
     rule: AutomationRule,
+    scope: RuleScope,
 ) -> list[dict[str, str]]:
-    """Build offer attributes, expanding excluded backdrops into an explicit list."""
-    excluded = offers_service.rule_excluded_backdrops(rule)
+    """Build offer attributes of one scope, expanding excluded backdrops explicitly."""
+    excluded = set(scope.excluded_backdrops)
+    attributes: list[dict[str, str]] = []
+    for value in scope.models:
+        attributes.append({"type": "model", "value": value})
+    for value in scope.backdrops:
+        attributes.append({"type": "backdrop", "value": value})
+    for value in scope.symbols:
+        attributes.append({"type": "symbol", "value": value})
     attributes = [
-        item
-        for item in rule_attributes(rule)
-        if not (item["type"] == "backdrop" and item["value"] in excluded)
+        item for item in attributes if not (item["type"] == "backdrop" and item["value"] in excluded)
     ]
-    if not excluded or rule.backdrops:
-        return attributes
+    if not excluded or scope.backdrops:
+        return sorted(attributes, key=lambda item: (item["type"], item["value"]))
     for entry in await collections_service.resolve_attribute_entries(
-        session, gateway, rule.collection_id, "backdrop"
+        session, gateway, rule.collection_id, "backdrop", model_names=list(scope.models) or None
     ):
         name = str(entry["name"])
         if name not in excluded:
             attributes.append({"type": "backdrop", "value": name})
     return sorted(attributes, key=lambda item: (item["type"], item["value"]))
+
+
+async def _has_pending_create(
+    session: AsyncSession, rule_id, signature: str
+) -> bool:
+    rows = await session.execute(
+        select(OperationQueue.payload).where(
+            OperationQueue.rule_id == rule_id,
+            OperationQueue.operation_type == OperationType.CREATE_OFFER.value,
+            OperationQueue.state.in_(
+                (OperationState.PENDING.value, OperationState.RUNNING.value, OperationState.RETRY.value)
+            ),
+        )
+    )
+    for payload in rows.scalars():
+        if (payload or {}).get("scope_signature") == signature:
+            return True
+    return False
 
 
 async def _enqueue_create(
@@ -355,36 +526,20 @@ async def _enqueue_create(
     credential: ApiCredential,
     decision: Decision,
     snapshot,
+    scope: RuleScope,
+    own_rows: list[ManagedOffer],
 ) -> bool:
     if decision.target_price is None:
         return False
-    pending_create = await session.execute(
-        select(OperationQueue.id)
-        .where(
-            OperationQueue.rule_id == rule.id,
-            OperationQueue.operation_type == OperationType.CREATE_OFFER.value,
-            OperationQueue.state.in_(
-                (OperationState.PENDING.value, OperationState.RUNNING.value, OperationState.RETRY.value)
-            ),
-        )
-        .limit(1)
-    )
-    if pending_create.scalar_one_or_none() is not None:
+
+    signature = scope_signature(scope)
+    if await _has_pending_create(session, rule.id, signature):
         return False
 
-    active_offers = await session.execute(
-        select(ManagedOffer.id)
-        .where(
-            ManagedOffer.rule_id == rule.id,
-            ManagedOffer.status == OfferStatus.PENDING.value,
-        )
-        .limit(max(1, rule.max_active_offers))
-    )
-    if len(active_offers.scalars().all()) >= max(1, rule.max_active_offers):
+    if len(own_rows) >= max(1, rule.max_active_offers):
         return False
 
-    signature = _scope_signature(rule)
-    attributes = await _offer_attributes(session, gateway, rule)
+    attributes = await _offer_attributes(session, gateway, rule, scope)
     dedupe_key = operations_service.make_dedupe_key(
         "create", rule.id, rule.collection_id, signature, money_str(decision.target_price), rule.max_nfts
     )
@@ -401,9 +556,9 @@ async def _enqueue_create(
             "max_nfts": rule.max_nfts,
             "attributes": attributes or None,
             "expiration_days": rule.expiration_days,
-            "models": rule.models,
-            "backdrops": rule.backdrops,
-            "symbols": rule.symbols,
+            "models": list(scope.models) or None,
+            "backdrops": list(scope.backdrops) or None,
+            "symbols": list(scope.symbols) or None,
             "scope_kind": snapshot.scope_kind,
             "scope_signature": signature,
             "credential_id": str(credential.id),
@@ -414,12 +569,15 @@ async def _enqueue_create(
     await audit.record(
         session,
         action="operation_scheduled",
-        message=f"Запланировано создание оффера по правилу «{rule.name}» на {money_str(decision.target_price)} GRAM",
+        message=(
+            f"Запланировано создание оффера по правилу «{rule.name}» "
+            f"({scope.label}) на {money_str(decision.target_price)} GRAM"
+        ),
         actor="worker",
         user_id=rule.user_id,
         entity_type="rule",
         entity_id=rule.id,
-        details={"operation_id": str(operation.id)},
+        details={"operation_id": str(operation.id), "model": scope.label},
     )
     return True
 
@@ -512,14 +670,16 @@ async def _emit_status_notifications(
     rule: AutomationRule,
     decision: Decision,
     floor_price: Decimal | None,
+    scope: RuleScope,
 ) -> None:
+    label = f"«{rule.name}» ({scope.label})" if scope.models else f"«{rule.name}»"
     if decision.position_status == PositionStatus.OUTBID.value:
         await notifications.notify(
             session,
             user_id=rule.user_id,
             event="outbid",
             title="Оффер перебит",
-            message=f"«{rule.name}»: конкурент выше, целевая цена {money_str(decision.target_price) if decision.target_price else '—'} GRAM",
+            message=f"{label}: конкурент выше, целевая цена {money_str(decision.target_price) if decision.target_price else '—'} GRAM",
             level="warning",
         )
     elif decision.position_status == PositionStatus.LIMIT_REACHED.value:
@@ -528,7 +688,7 @@ async def _emit_status_notifications(
             user_id=rule.user_id,
             event="limit_reached",
             title="Достигнут лимит цены",
-            message=f"«{rule.name}»: {decision.reason}",
+            message=f"{label}: {decision.reason}",
             level="warning",
         )
     elif decision.position_status == PositionStatus.INSUFFICIENT_FUNDS.value:
@@ -537,7 +697,7 @@ async def _emit_status_notifications(
             user_id=rule.user_id,
             event="insufficient_funds",
             title="Недостаточно средств",
-            message=f"«{rule.name}»: доступного баланса не хватает для повышения",
+            message=f"{label}: доступного баланса не хватает для повышения",
             level="error",
         )
     elif decision.position_status == PositionStatus.ATTRIBUTE_OFFERS_UNAVAILABLE.value:
@@ -546,7 +706,7 @@ async def _emit_status_notifications(
             user_id=rule.user_id,
             event="attribute_offers_unavailable",
             title="Офферы по атрибутам недоступны",
-            message=f"«{rule.name}»: API отклонил офферы по атрибутам",
+            message=f"{label}: API отклонил офферы по атрибутам",
             level="warning",
         )
     elif decision.position_status == PositionStatus.DATA_INCOMPLETE.value:
@@ -555,7 +715,7 @@ async def _emit_status_notifications(
             user_id=rule.user_id,
             event="first_place_unconfirmed",
             title="Первое место не подтверждено",
-            message=f"«{rule.name}»: {decision.reason}",
+            message=f"{label}: {decision.reason}",
             level="info",
         )
 

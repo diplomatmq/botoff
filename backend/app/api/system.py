@@ -37,7 +37,7 @@ async def system_status(
     rate_state = await get_rate_limiter().snapshot(credential.id) if credential is not None else None
     from app.services import settings_service
 
-    values = await settings_service.all_settings(session)
+    values = await settings_service.all_settings(session, user_id=user_id)
     throughput = values.get("throughput") or {}
 
     unsynced = int(

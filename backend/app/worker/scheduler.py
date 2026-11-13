@@ -366,8 +366,11 @@ class Worker:
         async with self.session_factory() as session:
             users = (await session.execute(select(User).where(User.is_active.is_(True)))).scalars().all()
             for user in users:
-                if not await settings_service.get_setting(session, "smart_trader_enabled", False):
-                    break
+                # Each account keeps its own smart trader configuration.
+                if not await settings_service.get_setting(
+                    session, "smart_trader_enabled", False, user_id=user.id
+                ):
+                    continue
                 credential = (
                     await session.execute(
                         select(ApiCredential)
@@ -440,10 +443,14 @@ class Worker:
                     return
 
                 mode = await settings_service.get_setting(
-                    session, "mode", AutomationMode.DRY_RUN.value
+                    session, "mode", AutomationMode.DRY_RUN.value, user_id=rule.user_id
                 )
-                enabled = await settings_service.get_setting(session, "automation_enabled", False)
-                emergency = await settings_service.get_setting(session, "emergency_stop", False)
+                enabled = await settings_service.get_setting(
+                    session, "automation_enabled", False, user_id=rule.user_id
+                )
+                emergency = await settings_service.get_setting(
+                    session, "emergency_stop", False, user_id=rule.user_id
+                )
 
                 credential = None
                 if rule.credential_id is not None:

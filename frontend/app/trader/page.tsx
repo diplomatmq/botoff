@@ -36,6 +36,7 @@ export default function TraderPage() {
   const [spread, setSpread] = useState('0');
   const [maxRebids, setMaxRebids] = useState('');
   const [maxActiveOffers, setMaxActiveOffers] = useState('1');
+  const [maxPurchases, setMaxPurchases] = useState('1');
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [offers, setOffers] = useState<Offer[]>([]);
@@ -63,6 +64,7 @@ export default function TraderPage() {
       setSpread(value.smart_trader_min_spread_percent);
       setMaxRebids(value.smart_trader_max_rebids_per_offer === null ? '' : String(value.smart_trader_max_rebids_per_offer));
       setMaxActiveOffers(value.smart_trader_max_active_offers === null ? '' : String(value.smart_trader_max_active_offers));
+      setMaxPurchases(value.smart_trader_max_purchases_per_collection === null ? '' : String(value.smart_trader_max_purchases_per_collection));
       setExcludedCollections(value.smart_trader_excluded_collections);
       setExcludedModels(value.smart_trader_excluded_models);
       setExcludedBackdrops(value.smart_trader_excluded_backdrops);
@@ -149,6 +151,7 @@ export default function TraderPage() {
     spread: normalizedNumber(settings?.smart_trader_min_spread_percent) ?? 0,
     maxRebids: normalizedNumber(settings?.smart_trader_max_rebids_per_offer),
     maxActiveOffers: normalizedNumber(settings?.smart_trader_max_active_offers),
+    maxPurchases: normalizedNumber(settings?.smart_trader_max_purchases_per_collection),
     excludedCollections: normalizedList(settings?.smart_trader_excluded_collections),
     excludedModels: normalizedList(settings?.smart_trader_excluded_models),
     excludedBackdrops: normalizedList(settings?.smart_trader_excluded_backdrops),
@@ -160,6 +163,7 @@ export default function TraderPage() {
     spread: normalizedNumber(spread) ?? 0,
     maxRebids: normalizedNumber(maxRebids),
     maxActiveOffers: normalizedNumber(maxActiveOffers),
+    maxPurchases: normalizedNumber(maxPurchases),
     excludedCollections: normalizedList(excludedCollections),
     excludedModels: normalizedList(excludedModels),
     excludedBackdrops: normalizedList(excludedBackdrops),
@@ -178,6 +182,7 @@ export default function TraderPage() {
           smart_trader_min_spread_percent: spread || '0',
           smart_trader_max_rebids_per_offer: maxRebids === '' ? null : Number(maxRebids),
           smart_trader_max_active_offers: maxActiveOffers === '' ? null : Number(maxActiveOffers),
+          smart_trader_max_purchases_per_collection: maxPurchases === '' ? null : Number(maxPurchases),
           smart_trader_excluded_collections: excludedCollections,
           smart_trader_excluded_models: excludedModels,
           smart_trader_excluded_backdrops: excludedBackdrops,
@@ -369,6 +374,11 @@ export default function TraderPage() {
               <span className="mb-1 block text-xs uppercase text-slate-400">Макс. одновременных офферов</span>
               <Input type="number" min="0" step="1" value={maxActiveOffers} onChange={(event) => setMaxActiveOffers(event.target.value)} placeholder="Пусто = без лимита" />
               <span className="mt-1 block text-xs text-slate-500">Офферы всегда идут на разные гифты: на один гифт допускается только один оффер. 0 или пусто = без лимита.</span>
+            </label>
+            <label className="block text-sm">
+              <span className="mb-1 block text-xs uppercase text-slate-400">Макс. покупок одного гифта</span>
+              <Input type="number" min="0" step="1" value={maxPurchases} onChange={(event) => setMaxPurchases(event.target.value)} placeholder="Пусто = без лимита" />
+              <span className="mt-1 block text-xs text-slate-500">Сколько раз трейдер может купить один и тот же гифт. По умолчанию 1. 0 или пусто = без лимита.</span>
             </label>
             <label className="block text-sm">
               <span className="mb-1 block text-xs uppercase text-slate-400">Макс. перебивов на один гифт</span>

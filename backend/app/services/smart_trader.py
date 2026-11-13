@@ -5,16 +5,24 @@ import logging
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.enums import OfferStatus, OperationType
-from app.models import ApiCredential, CollectionCache, ManagedOffer, ModelCache, OperationQueue
+from app.models import (
+    ApiCredential,
+    CollectionCache,
+    ManagedOffer,
+    ModelCache,
+    OperationQueue,
+    PurchasedGift,
+)
 from app.money import ZERO, increase_by_step, to_decimal
 from app.portals.client import PortalsGateway
 from app.portals.errors import PortalsError
 from app.services import collections_service, operations_service, settings_service
 from app.services.offers_service import (
+    _resolve_floor,
     offer_entries,
     sender_matches,
     sync_offer_row,
@@ -105,22 +113,34 @@ async def run(
     credential: ApiCredential,
     gateway: PortalsGateway,
 ) -> int:
-    if not await settings_service.get_setting(session, "smart_trader_enabled", False):
+    if not await settings_service.get_setting(
+        session, "smart_trader_enabled", False, user_id=user_id
+    ):
         return 0
     spread = Decimal(str(await settings_service.get_setting(
-        session, "smart_trader_min_spread_percent", "0"
+        session, "smart_trader_min_spread_percent", "0", user_id=user_id
     )))
-    max_rebids = await settings_service.get_setting(session, "smart_trader_max_rebids_per_offer", None)
+    max_rebids = await settings_service.get_setting(
+        session, "smart_trader_max_rebids_per_offer", None, user_id=user_id
+    )
     max_rebids = int(max_rebids) if max_rebids is not None else None
     if max_rebids == 0:
         max_rebids = None
     max_active_setting = await settings_service.get_setting(
-        session, "smart_trader_max_active_offers", 1
+        session, "smart_trader_max_active_offers", 1, user_id=user_id
     )
     max_active = int(max_active_setting) if max_active_setting not in (None, "") else None
     if max_active is not None and max_active <= 0:
         max_active = None
-    step = Decimal(str(await settings_service.get_setting(session, "default_min_step", "0.00001")))
+    max_purchases_setting = await settings_service.get_setting(
+        session, "smart_trader_max_purchases_per_collection", 1, user_id=user_id
+    )
+    max_purchases = int(max_purchases_setting) if max_purchases_setting not in (None, "") else None
+    if max_purchases is not None and max_purchases <= 0:
+        max_purchases = None
+    step = Decimal(str(await settings_service.get_setting(
+        session, "default_min_step", "0.00001", user_id=user_id
+    )))
     try:
         balance, frozen = await _wallet(gateway)
     except PortalsError as exc:
@@ -130,15 +150,35 @@ async def run(
     # is informational and must not be subtracted a second time.
     available = balance or ZERO
     excluded_collections = set(
-        await settings_service.get_setting(session, "smart_trader_excluded_collections", [])
+        await settings_service.get_setting(
+            session, "smart_trader_excluded_collections", [], user_id=user_id
+        )
     )
-    excluded_models = set(await settings_service.get_setting(session, "smart_trader_excluded_models", []))
+    excluded_models = set(
+        await settings_service.get_setting(
+            session, "smart_trader_excluded_models", [], user_id=user_id
+        )
+    )
     excluded_backdrops = set(
-        await settings_service.get_setting(session, "smart_trader_excluded_backdrops", [])
+        await settings_service.get_setting(
+            session, "smart_trader_excluded_backdrops", [], user_id=user_id
+        )
     )
     legacy_attribute_collection_id = await settings_service.get_setting(
-        session, "smart_trader_attribute_collection_id", None
+        session, "smart_trader_attribute_collection_id", None, user_id=user_id
     )
+    purchase_counts: dict[str, int] = {}
+    if max_purchases is not None:
+        purchase_counts = {
+            str(collection_id): int(count)
+            for collection_id, count in (
+                await session.execute(
+                    select(PurchasedGift.collection_id, func.count())
+                    .where(PurchasedGift.user_id == user_id)
+                    .group_by(PurchasedGift.collection_id)
+                )
+            ).all()
+        }
     await session.commit()
 
     collections = (await session.execute(
@@ -253,6 +293,8 @@ async def run(
             continue
         if collection.floor_price is None:
             continue
+        if max_purchases is not None and purchase_counts.get(collection.id, 0) >= max_purchases:
+            continue
         collection_models_excluded = _collection_exclusions(
             excluded_models, collection.id, legacy_attribute_collection_id
         )
@@ -304,8 +346,16 @@ async def run(
                 by_collection.pop(collection.id, None)
                 blocked_collections.add(collection.id)
                 continue
-        minimum_gap = collection.floor_price * spread / Decimal("100")
-        maximum_target = collection.floor_price - minimum_gap
+        try:
+            await session.commit()
+            floor = await _resolve_floor(session, gateway, collection, collection.id)
+        except PortalsError as exc:
+            logger.warning("floor lookup failed for collection %s: %s", collection.id, exc)
+            continue
+        if floor is None:
+            continue
+        minimum_gap = floor * spread / Decimal("100")
+        maximum_target = floor - minimum_gap
         try:
             await session.commit()
             raw = await gateway.offers_all(collection.id, scope="broad", limit=10)
@@ -374,11 +424,11 @@ async def run(
         if not amounts:
             continue
         best = max(amounts)
-        gap = collection.floor_price - best
+        gap = floor - best
         target = increase_by_step(best, step, Decimal("0.00001"))
         if cancelled_for_gap:
             continue
-        if row is not None and target >= collection.floor_price:
+        if row is not None and target >= floor:
             if await _enqueue_cancel(
                 session,
                 user_id=user_id,
@@ -388,7 +438,7 @@ async def run(
                 by_collection.pop(collection.id, None)
         if gap <= ZERO or target > maximum_target:
             continue
-        if target >= collection.floor_price:
+        if target >= floor:
             continue
         candidates.append((gap, collection, target, attributes))
 
@@ -453,7 +503,7 @@ async def run(
             operation_type=OperationType.CREATE_OFFER.value,
             user_id=user_id,
             payload={"source": SOURCE, "scope_signature": _signature(collection.id, attributes),
-                     "collection_id": collection.id, "amount": str(target), "cap": str(collection.floor_price),
+                     "collection_id": collection.id, "amount": str(target), "cap": str(floor),
                      "max_nfts": 1, "scope_kind": "trait" if attributes else "broad", "attributes": attributes,
                      "models": [item["value"] for item in attributes if item["type"] == "model"],
                      "backdrops": [item["value"] for item in attributes if item["type"] == "backdrop"],

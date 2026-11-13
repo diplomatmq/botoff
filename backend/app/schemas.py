@@ -284,6 +284,7 @@ class SettingsOut(BaseModel):
     smart_trader_min_spread_percent: str
     smart_trader_max_rebids_per_offer: int | None
     smart_trader_max_active_offers: int | None
+    smart_trader_max_purchases_per_collection: int | None
     smart_trader_excluded_collections: list[str]
     smart_trader_excluded_models: list[str]
     smart_trader_excluded_backdrops: list[str]
@@ -300,6 +301,7 @@ class SettingsUpdate(BaseModel):
     smart_trader_min_spread_percent: Decimal | None = Field(default=None, ge=0, le=100)
     smart_trader_max_rebids_per_offer: int | None = Field(default=None, ge=0, le=100000)
     smart_trader_max_active_offers: int | None = Field(default=None, ge=0, le=1000)
+    smart_trader_max_purchases_per_collection: int | None = Field(default=None, ge=0, le=1000)
     smart_trader_excluded_collections: list[str] | None = None
     smart_trader_excluded_models: list[str] | None = None
     smart_trader_excluded_backdrops: list[str] | None = None

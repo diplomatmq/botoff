@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import re
 from dataclasses import dataclass
@@ -91,6 +92,87 @@ def rule_attributes(rule: AutomationRule) -> list[dict[str, str]]:
     return attributes
 
 
+@dataclass(slots=True, frozen=True)
+class RuleScope:
+    """A single independently managed offer inside one rule.
+
+    When several models are selected the rule is split into one scope per model,
+    so every model gets its own offer that is priced from its own floor and
+    tracked on its own.
+    """
+
+    models: tuple[str, ...] = ()
+    backdrops: tuple[str, ...] = ()
+    symbols: tuple[str, ...] = ()
+    excluded_backdrops: tuple[str, ...] = ()
+
+    @property
+    def label(self) -> str:
+        return ", ".join(self.models) if self.models else "вся коллекция"
+
+
+def scope_uses_attributes(scope: RuleScope) -> bool:
+    return bool(scope.models or scope.backdrops or scope.symbols or scope.excluded_backdrops)
+
+
+def scope_kind(scope: RuleScope) -> str:
+    return "trait" if scope_uses_attributes(scope) else "broad"
+
+
+def scope_signature(scope: RuleScope) -> str:
+    payload = "|".join(
+        [
+            ",".join(sorted(scope.models)),
+            ",".join(sorted(scope.backdrops)),
+            ",".join(sorted(scope.symbols)),
+            ",".join(sorted(scope.excluded_backdrops)),
+        ]
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]
+
+
+def rule_scope(rule: AutomationRule) -> RuleScope:
+    return RuleScope(
+        models=tuple(str(value) for value in (rule.models or [])),
+        backdrops=tuple(str(value) for value in (rule.backdrops or [])),
+        symbols=tuple(str(value) for value in (rule.symbols or [])),
+        excluded_backdrops=tuple(str(value) for value in (rule.excluded_backdrops or [])),
+    )
+
+
+def rule_scopes(rule: AutomationRule) -> list[RuleScope]:
+    base = rule_scope(rule)
+    if not base.models:
+        return [base]
+    return [
+        RuleScope(
+            models=(model,),
+            backdrops=base.backdrops,
+            symbols=base.symbols,
+            excluded_backdrops=base.excluded_backdrops,
+        )
+        for model in base.models
+    ]
+
+
+def row_matches_scope(row: ManagedOffer, scope: RuleScope) -> bool:
+    row_scope = row.scope or {}
+    return (
+        {str(value) for value in (row_scope.get("models") or [])} == set(scope.models)
+        and {str(value) for value in (row_scope.get("backdrops") or [])} == set(scope.backdrops)
+        and {str(value) for value in (row_scope.get("symbols") or [])} == set(scope.symbols)
+    )
+
+
+def offer_belongs_to_scope(offer: dict[str, Any], scope: RuleScope) -> bool:
+    attributes = offer_scope_attributes(offer)
+    return (
+        attributes["model"] == set(scope.models)
+        and attributes["backdrop"] == set(scope.backdrops)
+        and attributes["symbol"] == set(scope.symbols)
+    )
+
+
 def offer_scope_attributes(offer: dict[str, Any]) -> dict[str, set[str]]:
     scope = offer.get("scope") or {}
     values: dict[str, set[str]] = {
@@ -135,6 +217,33 @@ def offer_matches_rule(offer: dict[str, Any], rule: AutomationRule) -> bool:
     - Backdrops listed in `rule.excluded_backdrops` are ignored on both sides: a competitor
       targeting only excluded backdrops is not a competitor.
     """
+    return offer_matches_attributes(
+        offer,
+        models=set(rule.models or []),
+        backdrops=set(rule.backdrops or []),
+        symbols=set(rule.symbols or []),
+        excluded_backdrops=rule_excluded_backdrops(rule),
+    )
+
+
+def offer_matches_scope(offer: dict[str, Any], scope: RuleScope) -> bool:
+    return offer_matches_attributes(
+        offer,
+        models=set(scope.models),
+        backdrops=set(scope.backdrops),
+        symbols=set(scope.symbols),
+        excluded_backdrops=set(scope.excluded_backdrops),
+    )
+
+
+def offer_matches_attributes(
+    offer: dict[str, Any],
+    *,
+    models: set[str],
+    backdrops: set[str],
+    symbols: set[str],
+    excluded_backdrops: set[str],
+) -> bool:
     offer_attributes = offer_scope_attributes(offer)
     offer_models = offer_attributes["model"]
     offer_backdrops = offer_attributes["backdrop"]
@@ -142,50 +251,45 @@ def offer_matches_rule(offer: dict[str, Any], rule: AutomationRule) -> bool:
 
     # Broad offer (no attributes specified) - it's a wildcard
     offer_is_broad = not (offer_models or offer_backdrops or offer_symbols)
-    
-    # Rule with no attributes selected - matches everything
-    rule_is_broad = not rule_uses_attributes(rule)
-    
+
+    # Scope with no attributes selected - matches everything
+    rule_is_broad = not (models or backdrops or symbols or excluded_backdrops)
+
     if rule_is_broad:
-        # Rule wants all items in collection - matches all offers
+        # Scope wants all items in collection - matches all offers
         return True
 
     if offer_is_broad:
-        # Broad offer competes with all rules
+        # Broad offer competes with all scopes
         return True
 
-    rule_models = set(rule.models or [])
-    rule_backdrops = set(rule.backdrops or [])
-    rule_symbols = set(rule.symbols or [])
-    excluded_backdrops = rule_excluded_backdrops(rule)
-
-    # Competitors that target only backdrops excluded by the rule are not competitors.
+    # Competitors that target only backdrops excluded by the scope are not competitors.
     if excluded_backdrops and offer_backdrops and offer_backdrops <= excluded_backdrops:
         return False
 
-    # The rule keeps all backdrops, so an offer narrowed to specific backdrops
+    # The scope keeps all backdrops, so an offer narrowed to specific backdrops
     # competes only for that subset and can be ignored.
-    if not rule_backdrops and offer_backdrops:
+    if not backdrops and offer_backdrops:
         return False
 
     # Check for attribute overlap
-    # If rule specifies models and offer has models, they must overlap
-    if rule_models and offer_models and not (offer_models & rule_models):
+    # If scope specifies models and offer has models, they must overlap
+    if models and offer_models and not (offer_models & models):
         return False
-    if rule_backdrops and offer_backdrops and not (offer_backdrops & rule_backdrops):
+    if backdrops and offer_backdrops and not (offer_backdrops & backdrops):
         return False
-    if rule_symbols and offer_symbols and not (offer_symbols & rule_symbols):
+    if symbols and offer_symbols and not (offer_symbols & symbols):
         return False
-    
+
     # A trait offer scoped only to an unselected attribute does not compete
-    # with a rule for another attribute. Broad offers remain applicable.
-    if rule_models and not offer_models and (offer_backdrops or offer_symbols):
+    # with a scope for another attribute. Broad offers remain applicable.
+    if models and not offer_models and (offer_backdrops or offer_symbols):
         return False
-    if rule_backdrops and not offer_backdrops and (offer_models or offer_symbols):
+    if backdrops and not offer_backdrops and (offer_models or offer_symbols):
         return False
-    if rule_symbols and not offer_symbols and (offer_models or offer_backdrops):
+    if symbols and not offer_symbols and (offer_models or offer_backdrops):
         return False
-    
+
     return True
 
 
@@ -244,18 +348,115 @@ async def _resolve_floor(
     return None
 
 
+async def resolve_model_floor(
+    session: AsyncSession,
+    gateway: PortalsGateway,
+    collection: CollectionCache | None,
+    collection_id: str,
+    model_name: str,
+) -> Decimal | None:
+    """Floor of a single model, falling back to the collection floor when unknown.
+
+    Model floors are cached in `ModelCache` and refreshed on demand so a stale
+    value cannot make the rule overpay above the real floor of the model.
+    """
+    now = datetime.now(UTC)
+    row = (
+        await session.execute(
+            select(ModelCache).where(
+                ModelCache.collection_id == collection_id,
+                ModelCache.name == model_name,
+            )
+        )
+    ).scalar_one_or_none()
+    if row is not None and _model_floor_is_fresh(row, now):
+        return row.floor_price
+
+    if await _refresh_model_floors_once(session, gateway):
+        row = (
+            await session.execute(
+                select(ModelCache).where(
+                    ModelCache.collection_id == collection_id,
+                    ModelCache.name == model_name,
+                )
+            )
+        ).scalar_one_or_none()
+        if row is not None and row.floor_price is not None:
+            return row.floor_price
+    elif row is not None and row.floor_price is not None:
+        return row.floor_price
+
+    return await _resolve_floor(session, gateway, collection, collection_id)
+
+
+def _model_floor_is_fresh(row: ModelCache, now: datetime) -> bool:
+    if row.floor_price is None:
+        return False
+    value = _as_utc(row.updated_at)
+    if value is None:
+        return False
+    return (now - value).total_seconds() < FLOOR_TTL_SECONDS
+
+
+_model_floors_refreshed_at: datetime | None = None
+
+
+async def _refresh_model_floors_once(session: AsyncSession, gateway: PortalsGateway) -> bool:
+    """Refresh every cached model floor at most once per FLOOR_TTL_SECONDS."""
+    global _model_floors_refreshed_at
+
+    now = datetime.now(UTC)
+    if _model_floors_refreshed_at is not None and (
+        now - _model_floors_refreshed_at
+    ).total_seconds() < FLOOR_TTL_SECONDS:
+        return False
+    _model_floors_refreshed_at = now
+
+    from app.services import collections_service
+
+    try:
+        await collections_service.refresh_models(session, gateway)
+    except PortalsError as exc:
+        logger.debug("model floors refresh failed: %s", exc)
+        return False
+    return True
+
+
+async def resolve_scope_floor(
+    session: AsyncSession,
+    gateway: PortalsGateway,
+    collection: CollectionCache | None,
+    collection_id: str,
+    scope: RuleScope,
+) -> Decimal | None:
+    """Price basis of a scope: the model floor for a single-model offer."""
+    if len(scope.models) == 1:
+        return await resolve_model_floor(
+            session, gateway, collection, collection_id, scope.models[0]
+        )
+    return await _resolve_floor(session, gateway, collection, collection_id)
+
+
+def _snapshot_own_rows(
+    rows: list[ManagedOffer], scope: RuleScope
+) -> list[ManagedOffer]:
+    return [row for row in rows if row_matches_scope(row, scope)]
+
+
 async def build_market_snapshot(
     session: AsyncSession,
     gateway: PortalsGateway,
     rule: AutomationRule,
     *,
     credential_sender_id: int | None = None,
+    scope: RuleScope | None = None,
 ) -> MarketSnapshotData:
+    scope = scope or rule_scope(rule)
     collection_id = rule.collection_id
-    scope_kind = rule_scope_kind(rule)
+    scope_kind_value = scope_kind(scope)
     collection = await session.get(CollectionCache, collection_id)
 
-    own_rows = list(
+    own_rows_all = list(
         (
             await session.execute(
                 select(ManagedOffer).where(
@@ -267,16 +468,16 @@ async def build_market_snapshot(
         .scalars()
         .all()
     )
+    own_rows = _snapshot_own_rows(own_rows_all, scope)
     own_ids = {row.external_offer_id for row in own_rows}
-    own_amounts = {row.external_offer_id: row.amount for row in own_rows}
 
     try:
-        payload = await gateway.offers_all(collection_id, scope=scope_kind, limit=10)
+        payload = await gateway.offers_all(collection_id, scope=scope_kind_value, limit=10)
     except PortalsRateLimited as exc:
-        await _store_snapshot(session, collection_id, scope_kind, [], 0, None)
+        await _store_snapshot(session, collection_id, scope_kind_value, [], 0, None)
         return MarketSnapshotData(
             collection_id,
-            scope_kind,
+            scope_kind_value,
             [],
             0,
             None,
@@ -291,7 +492,7 @@ async def build_market_snapshot(
     except PortalsError as exc:
         return MarketSnapshotData(
             collection_id,
-            scope_kind,
+            scope_kind_value,
             [],
             0,
             None,
@@ -316,18 +517,27 @@ async def build_market_snapshot(
     if not total_count:
         total_count = len(offers)
 
-    floor = await _resolve_floor(session, gateway, collection, collection_id)
+    floor = await resolve_scope_floor(session, gateway, collection, collection_id, scope)
 
     own_offer: dict[str, Any] | None = None
     own_rank: int | None = None
     for index, offer in enumerate(offers):
         offer_id = str(offer.get("id") or "")
-        if offer_id and (
-            offer_id in own_ids or sender_matches(offer.get("sender_id"), credential_sender_id)
+        if not offer_id:
+            continue
+        # Prefer our known offer rows of this scope; the live scope may be missing
+        # attributes that the API normalised away.
+        if offer_id in own_ids:
+            if own_offer is None:
+                own_offer, own_rank = offer, index
+            continue
+        if (
+            credential_sender_id is not None
+            and sender_matches(offer.get("sender_id"), credential_sender_id)
+            and offer_belongs_to_scope(offer, scope)
         ):
             if own_offer is None:
-                own_offer = offer
-                own_rank = index
+                own_offer, own_rank = offer, index
 
     relevant_competitors: list[Decimal] = []
     for offer in offers:
@@ -338,7 +548,7 @@ async def build_market_snapshot(
             continue
         if sender_matches(offer.get("sender_id"), credential_sender_id):
             continue
-        if not offer_matches_rule(offer, rule):
+        if not offer_matches_scope(offer, scope):
             continue
         amount = to_decimal(offer.get("amount"))
         if amount is not None:
@@ -363,11 +573,11 @@ async def build_market_snapshot(
             row.last_action_at = datetime.now(UTC)
             row.last_error = "Оффер не найден в активной ленте коллекции"
 
-    await _store_snapshot(session, collection_id, scope_kind, offers, total_count, floor)
+    await _store_snapshot(session, collection_id, scope_kind_value, offers, total_count, floor)
 
     return MarketSnapshotData(
         collection_id=collection_id,
-        scope_kind=scope_kind,
+        scope_kind=scope_kind_value,
         offers=offers,
         total_count=total_count,
         floor_price=floor,

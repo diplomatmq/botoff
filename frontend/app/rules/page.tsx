@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { Shell } from '@/components/Shell';
 import { Alert, Badge, Button, Card, Input, Modal, Select, Spinner, Td, Th, Toggle, type Tone } from '@/components/ui';
 import { apiFetch, formatDate, formatMoney, positionLabel, ruleStateLabel } from '@/lib/api';
-import type { Collection, CollectionAttribute, CollectionModel, Credential, DryRunPreview, MessageResponse, Rule } from '@/lib/types';
+import type { Collection, CollectionAttribute, CollectionModel, Credential, DryRunPreview, MessageResponse, PreviewScope, Rule } from '@/lib/types';
 
 interface RuleForm {
   name: string;
@@ -745,7 +745,7 @@ export default function RulesPage() {
               />
             </label>}
             <label className="block text-sm">
-              <span className="mb-1 block text-xs uppercase text-slate-400">Макс. активных офферов</span>
+              <span className="mb-1 block text-xs uppercase text-slate-400">Макс. офферов на модель</span>
               <Input
                 value={form.max_active_offers}
                 onChange={(event) => setField('max_active_offers', event.target.value)}
@@ -901,6 +901,36 @@ export default function RulesPage() {
               <span className="text-slate-400">Всего офферов: </span>
               {preview.total_offers}
             </p>
+            {Array.isArray(preview.detail.scopes) &&
+              (preview.detail.scopes as PreviewScope[]).length > 1 && (
+                <div className="mt-2 border-t border-slate-700 pt-3 sm:col-span-2">
+                  <p className="mb-2 text-slate-400">
+                    Отдельный оффер на каждую модель (свой floor у каждой):
+                  </p>
+                  <table className="w-full">
+                    <thead>
+                      <tr>
+                        <Th>Модель</Th>
+                        <Th>Действие</Th>
+                        <Th>Floor</Th>
+                        <Th>Целевая цена</Th>
+                        <Th>Потолок</Th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(preview.detail.scopes as PreviewScope[]).map((scope) => (
+                        <tr key={scope.model}>
+                          <Td>{scope.model}</Td>
+                          <Td>{scope.action}</Td>
+                          <Td>{formatMoney(scope.floor_price)}</Td>
+                          <Td>{formatMoney(scope.target_price)}</Td>
+                          <Td>{formatMoney(scope.cap)}</Td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
           </div>
         )}
       </Modal>
