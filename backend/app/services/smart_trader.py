@@ -8,6 +8,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.enums import OfferStatus, OperationType
 from app.models import (
     ApiCredential,
@@ -138,9 +139,16 @@ async def run(
     max_purchases = int(max_purchases_setting) if max_purchases_setting not in (None, "") else None
     if max_purchases is not None and max_purchases <= 0:
         max_purchases = None
-    step = Decimal(str(await settings_service.get_setting(
-        session, "default_min_step", "0.00001", user_id=user_id
-    )))
+    step = min(
+        Decimal(
+            str(
+                await settings_service.get_setting(
+                    session, "default_min_step", "0.01", user_id=user_id
+                )
+            )
+        ),
+        get_settings().max_rebid_step,
+    )
     try:
         balance, frozen = await _wallet(gateway)
     except PortalsError as exc:

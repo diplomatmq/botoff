@@ -87,7 +87,7 @@ def rule_snapshot(rule: AutomationRule) -> RuleSnapshot:
         discount_percent=Decimal(rule.discount_percent or 0),
         max_price_percent=rule.max_price_percent,
         fixed_price=rule.fixed_price,
-        min_step=rule.min_step,
+        min_step=min(rule.min_step, settings.max_rebid_step),
         max_price_per_offer=rule.max_price_per_offer,
         max_budget=rule.max_budget,
         max_active_offers=rule.max_active_offers,
@@ -119,6 +119,10 @@ async def run_rule_cycle(
     scopes = rule_scopes(rule)
     outcomes: list[ScopeOutcome] = []
     for scope in scopes:
+        # SQLite has a single writer: never carry a pending write transaction
+        # into the next scope, because the scope starts with Portals requests
+        # and the rate limiter persists its state on every call.
+        await session.commit()
         outcome = await _run_scope_cycle(
             session,
             rule=rule,
@@ -266,6 +270,9 @@ async def _run_scope_cycle(
             # One model reaching its own limit must not stop the other models.
             error = f"Пропуск: {decision.reason}"
     elif decision.action == "create":
+        # `_enqueue_create` may resolve offer attributes over the network, so the
+        # snapshot write above must be persisted first.
+        await session.commit()
         enqueued = await _enqueue_create(
             session, rule, gateway, credential, decision, snapshot, scope, own_rows
         )

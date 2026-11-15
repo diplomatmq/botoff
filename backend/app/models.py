@@ -197,7 +197,7 @@ class AutomationRule(Base, TimestampMixin):
     discount_percent: Mapped[Decimal] = mapped_column(Numeric(9, 4), default=Decimal("0"), nullable=False)
     max_price_percent: Mapped[Decimal | None] = mapped_column(Numeric(9, 4))
     fixed_price: Mapped[Decimal | None] = mapped_column(MONEY)
-    min_step: Mapped[Decimal] = mapped_column(MONEY, default=Decimal("0.00001"), nullable=False)
+    min_step: Mapped[Decimal] = mapped_column(MONEY, default=Decimal("0.01"), nullable=False)
     max_price_per_offer: Mapped[Decimal | None] = mapped_column(MONEY)
     max_budget: Mapped[Decimal | None] = mapped_column(MONEY)
     max_active_offers: Mapped[int] = mapped_column(Integer, default=1, nullable=False)

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Iterator
 
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -64,25 +64,35 @@ def _iter_floor_entries(payload: Any):
                     yield str(cid), price
 
 
-def _extract_model_entries(payload: Any) -> list[dict[str, Any]]:
-    candidates: list[dict[str, Any]] = []
-    if isinstance(payload, dict):
-        for key in ("models", "attribute_floors"):
-            value = payload.get(key)
-            if isinstance(value, list):
-                candidates.extend(item for item in value if isinstance(item, dict))
-            elif isinstance(value, dict):
-                for name, entry in value.items():
-                    if isinstance(entry, dict):
-                        merged = {"name": name, **entry}
-                        candidates.append(merged)
-                    elif isinstance(entry, list):
-                        for sub in entry:
-                            if isinstance(sub, dict):
-                                candidates.append({"name": name, **sub})
-    elif isinstance(payload, list):
-        candidates.extend(item for item in payload if isinstance(item, dict))
-    return candidates
+def _extract_deprecated_model_entries(payload: Any) -> list[dict[str, Any]]:
+    """Read the deprecated `models` list of an `attribute-floors` payload.
+
+    Portals marks this list as deprecated and does not include every model, so it is
+    only used as a fallback for `attribute_floors`.
+    """
+    if not isinstance(payload, dict):
+        return []
+    value = payload.get("models")
+    return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
+
+
+def _iter_attribute_floor_models(payload: Any) -> Iterator[tuple[str, str, Any]]:
+    """Iterate `(collection short name, model name, price)` of the `attribute_floors` map.
+
+    Portals keys this map by the collection short name in lowercase and lists every
+    model of the collection under `models`.
+    """
+    floors = payload.get("attribute_floors") if isinstance(payload, dict) else None
+    if not isinstance(floors, dict):
+        return
+    for short_name, entry in floors.items():
+        if not isinstance(entry, dict):
+            continue
+        models = entry.get("models")
+        if not isinstance(models, dict):
+            continue
+        for model_name, price in models.items():
+            yield str(short_name), model_name, price
 
 
 def extract_attribute_entries(payload: Any, attribute_type: str, collection_id: str) -> list[dict[str, Any]]:
@@ -435,49 +445,60 @@ async def _apply_attribute_floors(session: AsyncSession, payload: Any) -> dict[s
     if payload is None:
         return {"models": 0, "models_available": 0}
 
-    entries = _extract_model_entries(payload)
-    if not entries:
-        return {"models": 0, "models_available": 0}
-
-    collections = {
-        row.name.lower(): row for row in (await session.execute(select(CollectionCache))).scalars().all()
-    }
-    by_id = {row.id: row for row in collections.values()}
+    collections = list((await session.execute(select(CollectionCache))).scalars().all())
+    by_id = {row.id: row for row in collections}
+    by_name = {row.name.lower(): row for row in collections}
+    by_short_name = {row.short_name.lower(): row for row in collections if row.short_name}
 
     existing_models = {
         (row.collection_id, row.name): row
         for row in (await session.execute(select(ModelCache))).scalars().all()
     }
 
-    count = 0
-    for entry in entries:
+    touched: set[tuple[str, str]] = set()
+
+    def upsert(
+        collection: CollectionCache,
+        name: Any,
+        price: Any,
+        photo_url: str | None = None,
+        max_offer: Any = None,
+    ) -> None:
+        key = (collection.id, str(name)[:255])
+        row = existing_models.get(key)
+        if row is None:
+            row = ModelCache(collection_id=collection.id, name=str(name)[:255])
+            session.add(row)
+            existing_models[key] = row
+        touched.add(key)
+        row.photo_url = photo_url or row.photo_url
+        row.floor_price = to_decimal(price) or row.floor_price
+        row.max_offer = to_decimal(max_offer) or row.max_offer
+        row.source = "attribute_floors"
+
+    # The current source of truth: `attribute_floors`, keyed by collection short name.
+    for short_name, model_name, price in _iter_attribute_floor_models(payload):
+        collection = by_short_name.get(short_name.lower())
+        if collection is not None and model_name:
+            upsert(collection, model_name, price)
+
+    # Fallback for the deprecated `models` list, which the API still returns.
+    for entry in _extract_deprecated_model_entries(payload):
         name = entry.get("name") or entry.get("model") or entry.get("value")
         price = entry.get("floor_price") or entry.get("amount") or entry.get("price")
         collection_id = entry.get("collection_id")
         collection_name = entry.get("collection_name")
-        if collection_id is None and collection_name:
-            target = collections.get(str(collection_name).lower())
-            if target is not None:
-                collection_id = target.id
-        if collection_id is None:
-            continue
-        collection_id = str(collection_id)
-        if collection_id not in by_id or not name:
-            continue
-        key = (collection_id, str(name)[:255])
-        row = existing_models.get(key)
-        if row is None:
-            row = ModelCache(collection_id=collection_id, name=str(name)[:255])
-            session.add(row)
-            existing_models[key] = row
-        row.photo_url = _photo_url(entry) or row.photo_url
-        row.floor_price = to_decimal(price) or row.floor_price
-        row.max_offer = to_decimal(_max_offer(entry)) or row.max_offer
-        row.source = "attribute_floors"
-        count += 1
+        if collection_id is not None:
+            collection = by_id.get(str(collection_id))
+        elif collection_name:
+            collection = by_name.get(str(collection_name).lower())
+        else:
+            collection = None
+        if collection is not None and name:
+            upsert(collection, name, price, _photo_url(entry), _max_offer(entry))
 
     await session.flush()
-    return {"models": count, "models_available": 1}
+    return {"models": len(touched), "models_available": 1}
 
 
 async def list_collections(

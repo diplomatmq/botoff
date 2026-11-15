@@ -92,7 +92,7 @@ class RuleBase(BaseModel):
     discount_percent: Decimal = Field(default=Decimal("0"), ge=0, le=95)
     max_price_percent: Decimal | None = Field(default=None, ge=5, le=100)
     fixed_price: Decimal | None = Field(default=None, gt=0)
-    min_step: Decimal = Field(default=Decimal("0.00001"), gt=0)
+    min_step: Decimal = Field(default=Decimal("0.01"), gt=0)
     max_price_per_offer: Decimal | None = Field(default=None, gt=0)
     max_budget: Decimal | None = Field(default=None, gt=0)
     max_active_offers: int = Field(default=1, ge=1, le=10)

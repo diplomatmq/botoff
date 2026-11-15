@@ -5,6 +5,7 @@ from decimal import Decimal
 import pytest
 
 from app.enums import PositionStatus, RuleState, Strategy
+from app.models import AutomationRule
 from app.services.engine import (
     CREATE,
     NOOP,
@@ -16,6 +17,7 @@ from app.services.engine import (
     decide,
     resolve_position,
 )
+from app.services.rule_cycle import rule_snapshot
 
 QUANTUM = Decimal("0.00001")
 
@@ -172,3 +174,13 @@ def test_stale_market_data_pauses(stale: bool):
         assert decision.position_status == PositionStatus.STALE_DATA.value
     else:
         assert decision.action == CREATE
+
+
+def test_rule_snapshot_caps_min_step_at_max_rebid_step():
+    rule_model = AutomationRule(name="r", collection_id="c", min_step=Decimal("5"))
+    assert rule_snapshot(rule_model).min_step == Decimal("0.01")
+
+
+def test_rule_snapshot_keeps_smaller_min_step():
+    rule_model = AutomationRule(name="r", collection_id="c", min_step=Decimal("0.005"))
+    assert rule_snapshot(rule_model).min_step == Decimal("0.005")

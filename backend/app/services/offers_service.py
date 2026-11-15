@@ -955,6 +955,9 @@ async def sync_remote_offers(
     remote_ids: set[str] = set()
     complete_collections: set[str] = set()
     for collection_id in collections:
+        # SQLite allows a single writer: persist the previous collection before
+        # the next Portals request, otherwise the rate limiter write deadlocks.
+        await session.commit()
         try:
             payload = await asyncio.wait_for(
                 gateway.offers_all(str(collection_id), scope="broad", limit=10),

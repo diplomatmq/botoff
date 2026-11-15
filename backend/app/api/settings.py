@@ -25,7 +25,7 @@ async def _settings_out(session: AsyncSession, user_id: uuid.UUID) -> SettingsOu
         emergency_stop=bool(values.get("emergency_stop")),
         emergency_stop_reason=values.get("emergency_stop_reason"),
         mode=AutomationMode(values.get("mode", AutomationMode.DRY_RUN.value)),
-        default_min_step=str(values.get("default_min_step", "0.00001")),
+        default_min_step=str(values.get("default_min_step", "0.01")),
         throughput=values.get("throughput"),
         notifications_paused=bool(values.get("notifications_paused")),
         smart_trader_enabled=bool(values.get("smart_trader_enabled")),

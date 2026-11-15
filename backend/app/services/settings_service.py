@@ -15,7 +15,7 @@ DEFAULTS: dict[str, Any] = {
     "mode": AutomationMode.DRY_RUN.value,
     "emergency_stop_reason": None,
     "default_max_budget": None,
-    "default_min_step": "0.00001",
+    "default_min_step": "0.01",
     "notifications_paused": False,
     "smart_trader_enabled": False,
     "smart_trader_min_spread_percent": "0",

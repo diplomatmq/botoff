@@ -41,6 +41,8 @@ class Settings(BaseSettings):
 
     min_offer_amount: Decimal = Decimal("0.5")
     price_quantum: Decimal = Decimal("0.00001")
+    # The bot never raises an offer by more than this amount above the competitor.
+    max_rebid_step: Decimal = Decimal("0.01")
 
     default_check_interval_seconds: int = 60
     min_check_interval_seconds: int = 5

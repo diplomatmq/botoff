@@ -351,6 +351,9 @@ async def preview_rule(
     scope_previews: list[DryRunPreview] = []
     scope_details: list[dict[str, Any]] = []
     for scope in rule_scopes(rule):
+        # Persist the previous scope's snapshot before the next Portals request:
+        # SQLite allows a single writer and the rate limiter writes on every call.
+        await session.commit()
         snapshot = await build_market_snapshot(
             session, gateway, rule, credential_sender_id=credential.sender_id, scope=scope
         )

@@ -398,9 +398,9 @@ async def _execute_cancel(
     try:
         await gateway.cancel_offer(external_id)
     except PortalsNotFoundError:
+        await _refresh_budget_after_cancel(session, gateway, operation.user_id)
         if row is not None:
             row.status = OfferStatus.CANCELED.value
-        await _refresh_budget_after_cancel(session, gateway, operation.user_id)
         return ExecutionOutcome(
             ok=True,
             result={"offer_id": external_id, "already_absent": True},
@@ -411,12 +411,14 @@ async def _execute_cancel(
     except PortalsError as exc:
         return _error_outcome(exc, started)
 
+    # Refresh the wallet before mutating the row: SQLite keeps a single writer,
+    # so a pending write here would block the rate limiter's own write.
+    await _refresh_budget_after_cancel(session, gateway, operation.user_id)
     if row is not None:
         row.status = OfferStatus.CANCELED.value
         row.last_action = "cancel"
         row.last_action_at = datetime.now(UTC)
         row.position_status = "UNKNOWN"
-    await _refresh_budget_after_cancel(session, gateway, operation.user_id)
     return ExecutionOutcome(
         ok=True,
         result={"offer_id": external_id},

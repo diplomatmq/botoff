@@ -49,7 +49,7 @@ const EMPTY_FORM: RuleForm = {
   discount_percent: '0',
   max_price_percent: '',
   fixed_price: '',
-  min_step: '0.00001',
+  min_step: '0.01',
   max_price_per_offer: '',
   max_budget: '',
   max_active_offers: '1',
@@ -294,7 +294,7 @@ export default function RulesPage() {
       discount_percent: form.discount_percent === '' ? '0' : form.discount_percent,
       max_price_percent: form.max_price_percent.trim() === '' ? null : form.max_price_percent.trim(),
       fixed_price: form.fixed_price.trim() === '' ? null : form.fixed_price.trim(),
-      min_step: form.min_step.trim() === '' ? '0.00001' : form.min_step.trim(),
+      min_step: form.min_step.trim() === '' ? '0.01' : form.min_step.trim(),
       max_price_per_offer:
         form.max_price_per_offer.trim() === '' ? null : form.max_price_per_offer.trim(),
       max_budget: form.max_budget.trim() === '' ? null : form.max_budget.trim(),
