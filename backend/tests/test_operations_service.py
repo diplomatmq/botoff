@@ -176,3 +176,34 @@ async def test_retry_now_resets_failed_operation(user_id):
         assert operation.state == OperationState.RETRY.value
         assert operation.last_error is None
         assert operation.max_attempts > operation.attempts
+
+
+async def test_enqueue_duplicate_key_keeps_session_usable(user_id):
+    async with SessionLocal() as session:
+        key = operations_service.make_dedupe_key("create", "collection-dup")
+        first = await operations_service.enqueue(
+            session,
+            dedupe_key=key,
+            operation_type="create_offer",
+            user_id=user_id,
+            payload={"amount": "1"},
+        )
+        assert first is not None
+
+        duplicate = await operations_service.enqueue(
+            session,
+            dedupe_key=key,
+            operation_type="create_offer",
+            user_id=user_id,
+            payload={"amount": "1"},
+        )
+        assert duplicate is None
+
+        # A duplicate dedupe key must not expire the session: reading an already
+        # loaded attribute must not trigger a lazy load (MissingGreenlet).
+        assert first.operation_type == "create_offer"
+        await session.commit()
+
+    async with SessionLocal() as session:
+        rows = (await session.execute(_all_operations())).scalars().all()
+        assert len(rows) == 1

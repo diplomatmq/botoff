@@ -365,17 +365,20 @@ class Worker:
     async def _process_smart_trader(self) -> None:
         async with self.session_factory() as session:
             users = (await session.execute(select(User).where(User.is_active.is_(True)))).scalars().all()
-            for user in users:
+            # Snapshot the ids: a rollback below expires the ORM instances, so they
+            # must not be read again once the cycle failed.
+            user_ids = [user.id for user in users]
+            for user_id in user_ids:
                 # Each account keeps its own smart trader configuration.
                 if not await settings_service.get_setting(
-                    session, "smart_trader_enabled", False, user_id=user.id
+                    session, "smart_trader_enabled", False, user_id=user_id
                 ):
                     continue
                 credential = (
                     await session.execute(
                         select(ApiCredential)
                         .where(
-                            ApiCredential.user_id == user.id,
+                            ApiCredential.user_id == user_id,
                             ApiCredential.status == CredentialStatus.ACTIVE.value,
                         )
                         .order_by(ApiCredential.is_primary.desc())
@@ -387,7 +390,7 @@ class Worker:
                 try:
                     await run_smart_trader(
                         session,
-                        user_id=user.id,
+                        user_id=user_id,
                         credential=credential,
                         gateway=build_gateway(credential),
                     )
@@ -397,7 +400,7 @@ class Worker:
                     break
                 except PortalsError as exc:
                     await session.rollback()
-                    logger.warning("smart trader cycle failed for user %s: %s", user.id, exc)
+                    logger.warning("smart trader cycle failed for user %s: %s", user_id, exc)
 
     async def _claim_rules(self, limit: int = 5) -> list[uuid.UUID]:
         async with self.session_factory() as session:

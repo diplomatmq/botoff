@@ -49,11 +49,14 @@ async def enqueue(
         max_attempts=max_attempts or settings.operation_max_attempts,
         scheduled_at=scheduled_at or datetime.now(UTC),
     )
-    session.add(operation)
     try:
-        await session.flush()
+        # A duplicate dedupe key must not roll back the caller's whole transaction:
+        # a full rollback would expire every object loaded in the session and the
+        # next attribute access would trigger an unexpected lazy load.
+        async with session.begin_nested():
+            session.add(operation)
+            await session.flush()
     except IntegrityError:
-        await session.rollback()
         logger.debug("operation with dedupe key %s already queued", dedupe_key)
         return None
     return operation
