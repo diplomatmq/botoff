@@ -79,6 +79,43 @@ async def test_parallel_rules_share_rate_limiter_state(credential_id):
     assert state.total_requests == 8
 
 
+async def test_parallel_rate_limiter_writes_for_different_credentials(credential_id):
+    from sqlalchemy import select
+
+    async with SessionLocal() as session:
+        original = await session.get(ApiCredential, credential_id)
+        credential_ids = [credential_id]
+        for index in range(7):
+            credential = ApiCredential(
+                user_id=original.user_id,
+                encrypted_token=f"cipher-{index}",
+                token_hint=f"tok****{index}",
+                rate_limit_per_second=100,
+            )
+            session.add(credential)
+            await session.flush()
+            credential_ids.append(credential.id)
+        await session.commit()
+
+    limiters = [RateLimiter(SessionLocal, sleep=_noop) for _ in credential_ids]
+    await asyncio.gather(
+        *(limiter.acquire(cid, 100) for limiter, cid in zip(limiters, credential_ids))
+    )
+
+    async with SessionLocal() as session:
+        states = (
+            await session.execute(
+                select(ApiCredential.id)
+                .where(ApiCredential.id.in_(credential_ids))
+            )
+        ).scalars().all()
+    assert len(states) == len(credential_ids)
+    for limiter, cid in zip(limiters, credential_ids):
+        state = await limiter.snapshot(cid)
+        assert state is not None
+        assert state.total_requests == 1
+
+
 async def test_reset_clears_block(credential_id):
     limiter = RateLimiter(SessionLocal, sleep=_noop)
     await limiter.block_for(credential_id, 60.0)

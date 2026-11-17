@@ -9,7 +9,7 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import TypeVar
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -32,6 +32,17 @@ def as_utc(value: datetime | None) -> datetime | None:
     if value.tzinfo is None:
         return value.replace(tzinfo=UTC)
     return value
+
+
+@contextlib.asynccontextmanager
+async def _write_transaction(session: AsyncSession):
+    async with session.begin():
+        # SQLite ignores SELECT ... FOR UPDATE. Acquire its single-writer lock
+        # before reading state so concurrent processes cannot race to upgrade
+        # deferred read transactions into writes.
+        if session.get_bind().dialect.name == "sqlite":
+            await session.execute(text("BEGIN IMMEDIATE"))
+        yield
 
 
 class RateLimiter:
@@ -110,7 +121,7 @@ class RateLimiter:
             async def update_state() -> tuple[ApiRequestState | None, float]:
                 wait_for = 0.0
                 async with self._session_factory() as session:
-                    async with session.begin():
+                    async with _write_transaction(session):
                         state = await self._locked_state(session, credential_id)
                         now = utcnow()
                         state.limit_per_second = limit
@@ -157,7 +168,7 @@ class RateLimiter:
     ) -> None:
         async def update_state() -> None:
             async with self._session_factory() as session:
-                async with session.begin():
+                async with _write_transaction(session):
                     state = await self._locked_state(session, credential_id)
                     state.last_success_at = utcnow()
                     if remaining is not None:
@@ -170,7 +181,7 @@ class RateLimiter:
     async def report_error(self, credential_id, message: str, *, rate_limited: bool = False) -> None:
         async def update_state() -> None:
             async with self._session_factory() as session:
-                async with session.begin():
+                async with _write_transaction(session):
                     state = await self._locked_state(session, credential_id)
                     state.last_error_at = utcnow()
                     state.last_error_message = message[:500]
@@ -183,7 +194,7 @@ class RateLimiter:
     async def block_for(self, credential_id, seconds: float) -> None:
         async def update_state() -> None:
             async with self._session_factory() as session:
-                async with session.begin():
+                async with _write_transaction(session):
                     state = await self._locked_state(session, credential_id)
                     until = utcnow() + timedelta(seconds=max(0.05, seconds))
                     blocked_until = as_utc(state.blocked_until)
@@ -203,7 +214,7 @@ class RateLimiter:
     async def reset(self, credential_id) -> None:
         async def update_state() -> None:
             async with self._session_factory() as session:
-                async with session.begin():
+                async with _write_transaction(session):
                     state = await self._locked_state(session, credential_id)
                     state.blocked_until = None
 
