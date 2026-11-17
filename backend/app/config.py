@@ -40,7 +40,7 @@ class Settings(BaseSettings):
     rate_limit_safety_margin: float = 0.05
 
     min_offer_amount: Decimal = Decimal("0.5")
-    price_quantum: Decimal = Decimal("0.00001")
+    price_quantum: Decimal = Decimal("0.01")
     # The bot never raises an offer by more than this amount above the competitor.
     max_rebid_step: Decimal = Decimal("0.01")
 

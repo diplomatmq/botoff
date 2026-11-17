@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.enums import AuditAction, OfferStatus, OperationState, OperationType, PositionStatus, RuleState, Strategy
 from app.models import ApiCredential, AutomationRule, ManagedOffer, OperationQueue
-from app.money import ZERO, money_str, to_decimal
+from app.money import PORTALS_AMOUNT_QUANTUM, ZERO, money_str, to_decimal
 from app.notifications import service as notifications
 from app.portals.client import PortalsGateway
 from app.services import audit, collections_service, offers_service, operations_service
@@ -93,7 +93,7 @@ def rule_snapshot(rule: AutomationRule) -> RuleSnapshot:
         max_active_offers=rule.max_active_offers,
         max_nfts=rule.max_nfts,
         on_limit_behavior=rule.on_limit_behavior,
-        quantum=settings.price_quantum,
+        quantum=max(settings.price_quantum, PORTALS_AMOUNT_QUANTUM),
         min_offer_amount=settings.min_offer_amount,
         uses_attributes=bool(rule.models or rule.backdrops or rule.symbols or rule.excluded_backdrops),
         scope_guard=rule.scope_guard,

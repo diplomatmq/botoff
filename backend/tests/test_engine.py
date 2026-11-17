@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from types import SimpleNamespace
 
 import pytest
 
@@ -184,3 +185,20 @@ def test_rule_snapshot_caps_min_step_at_max_rebid_step():
 def test_rule_snapshot_keeps_smaller_min_step():
     rule_model = AutomationRule(name="r", collection_id="c", min_step=Decimal("0.005"))
     assert rule_snapshot(rule_model).min_step == Decimal("0.005")
+
+
+def test_rule_snapshot_uses_portals_amount_precision(monkeypatch):
+    import app.config
+
+    monkeypatch.setattr(
+        app.config,
+        "get_settings",
+        lambda: SimpleNamespace(
+            price_quantum=Decimal("0.00001"),
+            max_rebid_step=Decimal("0.01"),
+            min_offer_amount=Decimal("0.5"),
+        ),
+    )
+    rule_model = AutomationRule(name="r", collection_id="c", min_step=Decimal("0.01"))
+
+    assert rule_snapshot(rule_model).quantum == Decimal("0.01")

@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.enums import OfferStatus, OperationType
 from app.models import AccountBudgetState, ApiCredential, AutomationRule, ManagedOffer, OperationQueue
-from app.money import money_str, to_decimal
+from app.money import money_str, portals_amount, to_decimal
 from app.portals.client import PortalsGateway
 from app.portals.errors import (
     PortalsAuthError,
@@ -142,11 +142,16 @@ async def _execute_create(
     credential: ApiCredential,
     started: float,
 ) -> ExecutionOutcome:
-    payload = operation.payload or {}
+    payload = dict(operation.payload or {})
     collection_id = payload["collection_id"]
     amount = to_decimal(payload["amount"])
     if amount is None:
         return ExecutionOutcome(ok=False, error="Некорректная цена оффера")
+    amount = portals_amount(amount)
+    if amount <= 0:
+        return ExecutionOutcome(ok=False, error="Цена оффера должна быть не меньше 0.01")
+    payload["amount"] = money_str(amount)
+    operation.payload = payload
     attributes = payload.get("attributes") or None
     max_nfts = int(payload.get("max_nfts") or 1)
     expiration_days = payload.get("expiration_days")
@@ -316,6 +321,11 @@ async def _execute_update(
     amount = to_decimal(payload.get("amount"))
     if amount is None:
         return ExecutionOutcome(ok=False, error="Некорректная цена обновления")
+    amount = portals_amount(amount)
+    if amount <= 0:
+        return ExecutionOutcome(ok=False, error="Цена обновления должна быть не меньше 0.01")
+    payload = {**payload, "amount": money_str(amount)}
+    operation.payload = payload
 
     item: dict[str, Any] = {"id": row.external_offer_id, "amount": money_str(amount)}
     if payload.get("max_nfts") is not None:

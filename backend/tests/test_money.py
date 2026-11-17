@@ -7,6 +7,7 @@ from app.money import (
     discounted_max_price,
     increase_by_step,
     money_str,
+    portals_amount,
     quantize,
     to_decimal,
 )
@@ -46,3 +47,8 @@ def test_money_str_trims_trailing_zeros():
     assert money_str(Decimal("1.50000")) == "1.5"
     assert money_str(Decimal("2.00000")) == "2"
     assert money_str(ZERO) == "0"
+
+
+def test_portals_amount_rounds_down_to_two_decimal_places():
+    assert portals_amount(Decimal("1.23999")) == Decimal("1.23")
+    assert portals_amount(Decimal("1.23000")) == Decimal("1.23")

@@ -1,6 +1,7 @@
 from decimal import ROUND_DOWN, Decimal, InvalidOperation
 
 ZERO = Decimal("0")
+PORTALS_AMOUNT_QUANTUM = Decimal("0.01")
 
 
 def to_decimal(value: object, default: Decimal | None = None) -> Decimal | None:
@@ -19,6 +20,11 @@ def quantize(value: Decimal, quantum: Decimal) -> Decimal:
         return value
     steps = (value / quantum).to_integral_value(rounding=ROUND_DOWN)
     return (steps * quantum).quantize(quantum)
+
+
+def portals_amount(value: Decimal) -> Decimal:
+    """Normalize an offer amount to Portals' maximum of two decimal places."""
+    return quantize(value, PORTALS_AMOUNT_QUANTUM)
 
 
 def discounted_max_price(

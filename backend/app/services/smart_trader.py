@@ -18,7 +18,7 @@ from app.models import (
     OperationQueue,
     PurchasedGift,
 )
-from app.money import ZERO, increase_by_step, to_decimal
+from app.money import PORTALS_AMOUNT_QUANTUM, ZERO, increase_by_step, to_decimal
 from app.portals.client import PortalsGateway
 from app.portals.errors import PortalsError
 from app.services import collections_service, operations_service, settings_service
@@ -433,7 +433,7 @@ async def run(
             continue
         best = max(amounts)
         gap = floor - best
-        target = increase_by_step(best, step, Decimal("0.00001"))
+        target = increase_by_step(best, step, PORTALS_AMOUNT_QUANTUM)
         if cancelled_for_gap:
             continue
         if row is not None and target >= floor:
