@@ -44,7 +44,13 @@ if _db_path is not None:
         cursor.close()
 
 
-SessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+# `autoflush=False` is essential on SQLite: the worker mutates `operation.payload`
+# right before calling Portals, and with autoflush enabled the next SELECT would
+# flush that UPDATE, making the worker hold SQLite's single write lock for the whole
+# network call. The rate limiter (separate session) then fails on `BEGIN IMMEDIATE`
+# with "database is locked", taking login and the whole API down with it. Code that
+# needs pending changes visible flushes explicitly, so nothing relies on autoflush.
+SessionLocal = async_sessionmaker(engine, expire_on_commit=False, autoflush=False, class_=AsyncSession)
 
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:

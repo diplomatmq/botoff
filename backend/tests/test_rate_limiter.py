@@ -124,5 +124,30 @@ async def test_reset_clears_block(credential_id):
     assert state.blocked_until is None
 
 
+async def test_pending_worker_update_does_not_block_limiter(credential_id):
+    """A pending worker mutation must not hold SQLite's single write lock.
+
+    Regression: the worker mutates the operation payload right before calling Portals.
+    With autoflush enabled the next SELECT flushed that UPDATE, so the worker held the
+    write lock for the whole network call and the limiter failed on `BEGIN IMMEDIATE`
+    with "database is locked" — which also took login down with a 500.
+    """
+    from sqlalchemy import select
+
+    async with SessionLocal() as worker:
+        credential = await worker.get(ApiCredential, credential_id)
+        credential.token_hint = "changed-hint"
+        # Mimics the executor: a SELECT happens between the mutation and the network call.
+        await worker.execute(select(ApiCredential.id))
+        assert credential in worker.dirty, "мутация воркера не должна сбрасываться в БД досрочно"
+
+        limiter = RateLimiter(SessionLocal, sleep=_noop)
+        await limiter.acquire(credential_id, 1)
+
+    state = await limiter.snapshot(credential_id)
+    assert state is not None
+    assert state.total_requests == 1
+
+
 async def _noop(seconds: float) -> None:
     return None
